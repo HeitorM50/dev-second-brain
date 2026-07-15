@@ -1,50 +1,55 @@
-# 🧠 dev-second-brain
+# dev-second-brain
 
-> **AI Second Brain for Developers** — um segundo cérebro que lembra das suas conversas, guarda o contexto dos seus projetos e responde *"o que a gente decidiu semana passada?"*.
-
-Projeto pessoal de férias, com foco duplo: **produtividade pessoal** e **aprender na prática** um stack moderno de aplicações com IA (agents + RAG).
+**AI Second Brain for Developers** — um segundo cérebro que registra conversas, preserva o contexto de projetos e responde, em linguagem natural, perguntas sobre decisões passadas.
 
 ---
 
-## 💡 O problema
+## Visão geral
 
-Como dev, contexto se perde o tempo todo:
+No dia a dia de desenvolvimento, contexto se perde com facilidade:
 
-- Decisões técnicas tomadas semanas atrás que ninguém lembra o porquê.
-- Conversas e discussões importantes que somem no histórico.
-- "Por que a gente escolheu essa lib mesmo?"
+- Decisões técnicas tomadas semanas atrás cujo motivo ninguém mais lembra.
+- Discussões relevantes que se dissolvem no histórico de mensagens.
+- Justificativas de escolhas ("por que adotamos essa biblioteca?") que nunca ficam documentadas.
 
-O **dev-second-brain** captura esse conhecimento e deixa você **conversar com a sua própria memória**.
+O `dev-second-brain` captura esse conhecimento e permite consultá-lo por meio de perguntas em linguagem natural, tratando a memória do projeto como uma base pesquisável em vez de um arquivo morto.
 
-## ✨ O que ele vai fazer
+## Funcionalidades
 
-- 🗣️ **Relembrar conversas** — busca sobre discussões e trocas passadas.
-- 📁 **Guardar contexto de projetos** — cada projeto com sua própria memória.
-- 🔎 **Pesquisar decisões antigas** — *"o que decidimos semana passada?"* como pergunta em linguagem natural.
-- 🤖 **Agente de busca** — responde perguntas cruzando fontes via RAG, não só keyword match.
+- **Registro de conversas** — armazenamento e recuperação de discussões e trocas anteriores.
+- **Contexto por projeto** — cada projeto mantém sua própria base de memória isolada.
+- **Busca semântica de decisões** — consultas em linguagem natural sobre o histórico, com recuperação por significado (RAG) e não apenas por correspondência de palavras-chave.
+- **Agente de busca** — cruza múltiplas fontes para compor respostas fundamentadas.
 
-## 🛠️ Tech Stack (planejada)
+## Arquitetura
+
+A stack está em definição; parte do objetivo do projeto é avaliar as alternativas em cada camada antes de fixá-las.
 
 | Camada | Tecnologia |
 |---|---|
-| Frontend / App | **Next.js** |
-| Orquestração de agentes | **LangGraph** / **OpenAI Agent SDK** |
-| Busca semântica | **RAG** com **pgvector** ou **Pinecone** |
-| Cache / sessões | **Redis** |
+| Frontend / Aplicação | Next.js |
+| Orquestração de agentes | LangGraph ou OpenAI Agent SDK |
+| Busca semântica | RAG com pgvector ou Pinecone |
+| Cache / memória de curto prazo | Redis |
 
-> ⚠️ Stack em definição — parte do objetivo é experimentar e comparar as opções (ex.: pgvector vs. Pinecone, LangGraph vs. Agent SDK).
+Decisões de stack em aberto (por exemplo, pgvector vs. Pinecone e LangGraph vs. Agent SDK) serão registradas conforme forem tomadas.
 
-## 🎯 Objetivos de aprendizado
+## Getting Started
 
-- Construir um pipeline de **RAG** do zero.
-- Entender **orquestração de agentes** com estado.
-- Trabalhar com **embeddings** e bancos vetoriais.
-- Usar **Redis** para cache e memória de curto prazo.
+> Em construção. As instruções de instalação e execução serão adicionadas assim que a estrutura inicial da aplicação estiver definida.
 
-## 🗺️ Status
+## Roadmap
 
-🚧 **Em fase inicial** — começando pela estrutura e definição do stack.
+- [ ] Definição da stack e estrutura inicial do projeto
+- [ ] Ingestão e armazenamento de conversas
+- [ ] Pipeline de RAG (embeddings + banco vetorial)
+- [ ] Contexto isolado por projeto
+- [ ] Agente de busca sobre múltiplas fontes
+
+## Status
+
+Fase inicial — estrutura e definição da stack em andamento.
 
 ---
 
-Feito por [@HeitorM50](https://github.com/HeitorM50) 🚀
+Desenvolvido por [@HeitorM50](https://github.com/HeitorM50).
