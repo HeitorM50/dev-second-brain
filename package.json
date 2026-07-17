@@ -1,0 +1,28 @@
+{
+  "name": "dev-second-brain",
+  "version": "1.0.0",
+  "description": "**AI Second Brain for Developers** — um segundo cérebro que registra conversas, preserva o contexto de projetos e responde, em linguagem natural, perguntas sobre decisões passadas.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HeitorM50/dev-second-brain.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/HeitorM50/dev-second-brain/issues"
+  },
+  "homepage": "https://github.com/HeitorM50/dev-second-brain#readme",
+  "devDependencies": {
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2"
+  }
+}
