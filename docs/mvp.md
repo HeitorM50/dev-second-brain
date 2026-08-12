@@ -2,7 +2,10 @@
 
 Documento vivo com as decisões e o escopo da primeira versão. Atualize conforme o projeto evolui.
 
-_Última atualização: 2026-07-20_
+_Última atualização: 2026-08-11_
+
+> Visão de cima (diagramas do sistema, fases e roadmap): **`docs/arquitetura.md`**.
+> Este documento aqui guarda as **decisões** e o **ponto exato** onde retomar.
 
 ---
 
@@ -26,7 +29,12 @@ com citação da fonte."_
 | Linguagem | **TypeScript / Node** | A stack planejada é Next.js; escrever o núcleo em TS permite reaproveitar tudo na aplicação depois. |
 | Formato inicial | **CLI autônomo primeiro**, depois integrar ao Next.js | Construir o núcleo do RAG como script de terminal foca 100% no conceito, sem o ruído de montar UI web junto. A mesma lógica será chamada pela app Next.js mais tarde (só muda quem aciona). |
 | Chunking (passo 2) | **Por seção (títulos markdown)** + fusão de chunks pequenos + carimbo de fonte | As notas já são estruturadas em `##`; cada seção vira um chunk coerente, com o título como contexto. Chunks abaixo de ~120 caracteres são fundidos ao anterior (`MIN_CHUNK_LENGTH`), para não sobrar pedaço magro. Cada chunk recebe uma linha `Fonte: <nome da nota>` para não perder contexto ao ser embeddado. |
-| Embeddings (passo 3) | **Local via Ollama**, modelo `nomic-embed-text` (768 dimensões) | Grátis, privado e offline — os textos não saem da máquina (alinhado a "dono dos seus dados"). Alternativas descartadas: OpenAI (API paga, dados saem da máquina) e Transformers.js (puro npm, porém mais lento). A Anthropic não oferece API de embeddings. |
+| Embeddings (passo 3) | **Local via Ollama** | Grátis, privado e offline — os textos não saem da máquina (alinhado a "dono dos seus dados"). Alternativas descartadas: OpenAI (API paga, dados saem da máquina) e Transformers.js (puro npm, porém mais lento). A Anthropic não oferece API de embeddings. |
+| Modelo de embedding | **`bge-m3`** (1024 dim.) — substituiu o `nomic-embed-text` | O `nomic-embed-text` é treinado essencialmente em inglês e falhou com notas em português: a resposta certa para "qual tecnologia para montar as telas?" ficou em **13º de 15**, e uma pergunta sobre bolo de cenoura pontuava 0,62. Com `bge-m3` (multilíngue), a mesma pergunta acerta em 1º e o controle cai para 0,26. Testadas e descartadas antes da troca: prefixos de tarefa e remoção do carimbo `Fonte:`. |
+| Índice (passo 4) | **Arquivo JSON + varredura linear** | Zero dependências, dados inspecionáveis a olho nu, e a similaridade de cosseno escrita à mão — o conceito central a aprender. Descartados: SQLite vetorial (esconde a matemática) e Postgres (banco para 12 chunks). Isolado atrás de `src/store.ts`, então trocar depois custa reescrever um arquivo. |
+| Interface (Fase 2) | **Aplicativo local**, começando por servidor local + navegador | Um app instalado é um processo de longa duração: carrega o índice uma vez e mantém na memória, então cada pergunta custa milissegundos — **isso elimina a necessidade de Postgres**. Também fecha a coerência do projeto (notas, embeddings, índice e interface, tudo local). Descartados por ora: Electron (peso), Tauri (exigiria Rust) e TUI (UI não reaproveitável). **Rebaixado a opcional** pela decisão do servidor MCP abaixo. |
+| **Passo 5 — quem redige a resposta** | **O próprio Claude Code**, via um **servidor MCP** que expõe a busca como ferramenta | Elimina a decisão "Claude API vs. modelo local": o LLM passa a ser o Claude Code que o Heitor já usa no terminal, sem chave de API e sem custo extra. Registrado em escopo de usuário, o vault fica consultável **de dentro de qualquer projeto** — que é literalmente a ideia de segundo cérebro. Também torna a Fase 2 opcional: a ferramenta já fica usável sem app nenhum. Custo assumido: a redação final exige internet e os trechos recuperados saem da máquina (o que já ocorre ao usar o Claude Code neste repo). A busca e os embeddings seguem 100% locais. |
+| Organização das notas | **Um vault por projeto** (`notes/<vault>/`), com índice separado por vault | Perguntar "por que escolhemos Postgres?" com tudo junto traz trechos de projetos diferentes que decidiram o mesmo por razões diferentes — é problema de **corretude**, não só de performance. Índices separados também evitam carregar tudo para responder sobre um projeto só. A busca aceita um vault específico ou cruza todos, conforme a pergunta. |
 
 ---
 
@@ -43,7 +51,7 @@ trechos relevantes e só então **gera-se** a resposta com base neles.
 3. **Embeddar** — transformar cada pedaço num vetor (lista de números) de forma
    que textos com **significado parecido** fiquem **próximos** nesse espaço.
    É isso que faz "qual banco escolhemos?" encontrar "decidimos usar Postgres".
-   _(em andamento — via Ollama)_
+   _(em andamento — `embed()` funcionando via Ollama; falta rodar em todos os chunks)_
 4. **Indexar** — guardar os vetores num índice de busca vetorial.
 5. **Consultar** — embeddar a pergunta, achar os pedaços mais próximos, entregar
    esses pedaços + a pergunta ao Claude e receber a resposta **citando a fonte**.
@@ -85,27 +93,48 @@ Ideias registradas para não se perderem; ainda **não** fazem parte do MVP.
 
 ## Estado atual / onde retomar
 
-_Atualizado em 2026-07-20._
+_Atualizado em 2026-08-11._
 
 - **Ambiente:** Node/TS pronto (`tsx`, `tsconfig.json`, `@types/node`); ESM
   (`"type": "module"`). Rodar o pipeline atual com `npm run ingest`.
 - **Passo 1 (ingestão) — concluído:** `src/ingest.ts` lista e lê os `.md` de `notes/`.
 - **Passo 2 (chunking) — concluído:** função `chunkByHeading` fatia por seção `##`;
   `mergeSmallChunks` funde os pequenos (`MIN_CHUNK_LENGTH = 120`); cada chunk é
-  carimbado com `Fonte: <nome da nota>`.
-- **Passo 3 (embeddings) — EM ANDAMENTO. PARAMOS AQUI 👇**
-  - Decisão: Ollama + `nomic-embed-text` (ver tabela de decisões).
-  - **Checkpoint 9 (próximo — ainda NÃO executado): instalar e testar o Ollama.**
-    1. `sudo pacman -S ollama`
-    2. `sudo systemctl start ollama`
-    3. `ollama pull nomic-embed-text`
-    4. `ollama list` (conferir que o modelo está lá)
-    5. Testar na mão:
-       `curl http://localhost:11434/api/embeddings -d '{"model":"nomic-embed-text","prompt":"teste"}'`
-       → deve devolver um campo `embedding` com ~768 números.
-  - **Depois (Checkpoint 10):** escrever a função `embed()` no `ingest.ts` usando
-    `fetch` + `async/await` (primeira chamada de API de verdade), testar com um texto,
-    e então embeddar todos os chunks.
+  carimbado com `Fonte: <nome da nota>`. Total atual: **15 chunks** em 4 notas.
+- **Passo 3 (embeddings) — CONCLUÍDO:** `src/embed.ts` chama o Ollama com `bge-m3`.
+  O **texto é guardado junto do vetor** porque o embedding não é reversível — sem
+  ele, a busca acha o chunk certo e não sabe o que ele diz.
+- **Passo 4 (indexar) — CONCLUÍDO:** `src/store.ts` salva em `data/index.json`
+  (fora do git — é derivado), implementa `cosineSimilarity` à mão e `search` por
+  varredura linear.
+- **Passo 5 (consultar) — EM ANDAMENTO. PARAMOS AQUI 👇**
+  - ✅ Já funciona: `npm run ask -- "sua pergunta"` embedda a pergunta, busca os 3
+    trechos mais próximos e mostra pontuação + nota de origem. Validado com
+    perguntas sem nenhuma palavra em comum com as notas — ex.: *"como vamos deixar
+    o app bonito?"* encontra a seção sobre Tailwind.
+  - ⬜ **Falta:** entregar esses trechos + a pergunta a um LLM e receber a resposta
+    redigida **citando a fonte**. É o critério de sucesso do MVP.
+  - **Decisão pendente:** Claude via API (melhor redação) vs. modelo local no Ollama
+    (offline, grátis, coerente com o app local da Fase 2).
+- **Separação por vault — CONCLUÍDA:** cada subpasta de `notes/` é um vault (um
+  projeto) e gera seu próprio índice em `data/vaults/<nome>.json`. Existem dois hoje:
+  `taskflow` (dados de exemplo) e `dev-second-brain` (decisões reais deste projeto).
+  A busca aceita `--vault <nome>` para escopo único ou cruza todos por padrão.
+  Demonstração da diferença, com a pergunta *"por que escolhemos Postgres?"*:
+  no vault `taskflow` os 3 resultados vêm da decisão do TaskFlow; cruzando tudo, o
+  3º lugar passa a ser a nota deste projeto que **descartou** o Postgres — mesma
+  palavra, decisão oposta. É o problema de corretude que motivou a separação.
+- **Indexação incremental — CONCLUÍDA:** cada chunk guarda um hash SHA-256 do texto;
+  o `ingest` reaproveita os embeddings de tudo que não mudou. Reindexar sem mudanças
+  caiu de **13,8s para 0,0s**; editar uma nota custa **0,5s**. O arquivo de índice
+  passou a gravar o modelo usado (`{ model, chunks }`) e descarta o cache inteiro se
+  o modelo mudar — sem isso, trocar de modelo deixaria vetores incompatíveis no
+  índice de forma silenciosa.
+- **Dívida conhecida** (não bloqueia o MVP): **conjunto de avaliação** — a qualidade
+  da busca está sendo julgada por perguntas inventadas na hora, não medida.
+
+> **Modo de trabalho mudou em 2026-08-11:** o Claude escreve o código e roda os
+> comandos; o Heitor acompanha para entender. Ver `CLAUDE.md`.
 
 > Método: ensino por **checkpoints** — ver a skill `.claude/skills/ensino-checkpoints/`.
 > O Heitor digita e roda cada passo; o Claude guia e explica. Ver também "Modo de

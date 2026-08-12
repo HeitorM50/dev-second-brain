@@ -47,6 +47,10 @@ next-env.d.ts
 *.sqlite
 *.db
 
+# Índice vetorial — derivado de notes/, reconstruível com `npm run ingest`.
+# Não versionar: é grande, binário-ish e fica obsoleto a cada edição de nota.
+/data/
+
 # Logs
 logs
 *.log
