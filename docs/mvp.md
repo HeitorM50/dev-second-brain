@@ -108,14 +108,50 @@ _Atualizado em 2026-08-11._
   (fora do git — é derivado), implementa `cosineSimilarity` à mão e `search` por
   varredura linear.
 - **Passo 5 (consultar) — EM ANDAMENTO. PARAMOS AQUI 👇**
-  - ✅ Já funciona: `npm run ask -- "sua pergunta"` embedda a pergunta, busca os 3
-    trechos mais próximos e mostra pontuação + nota de origem. Validado com
-    perguntas sem nenhuma palavra em comum com as notas — ex.: *"como vamos deixar
-    o app bonito?"* encontra a seção sobre Tailwind.
-  - ⬜ **Falta:** entregar esses trechos + a pergunta a um LLM e receber a resposta
-    redigida **citando a fonte**. É o critério de sucesso do MVP.
-  - **Decisão pendente:** Claude via API (melhor redação) vs. modelo local no Ollama
-    (offline, grátis, coerente com o app local da Fase 2).
+  - ✅ `npm run ask -- [--vault <nome>] "pergunta"` embedda a pergunta e mostra os
+    trechos mais próximos. Validado com perguntas sem nenhuma palavra em comum com
+    as notas — ex.: *"como vamos deixar o app bonito?"* encontra a seção sobre Tailwind.
+  - ✅ **Servidor MCP escrito** (`src/mcp-server.ts`, registrado em `.mcp.json`),
+    expondo `list_vaults` e `search_notes(query, vault?, limit?)`. Testado na mão via
+    JSON-RPC: handshake, listagem de ferramentas e chamada de busca funcionando.
+  - ✅ **Validado em uso real em 2026-08-11:** pergunta em linguagem natural → o Claude
+    Code chama `search_notes` → resposta redigida citando a nota de origem.
+
+## 🎯 MVP CONCLUÍDO — 2026-08-11
+
+O objetivo declarado no topo deste documento foi atingido: _"apontar a ferramenta para
+uma pasta de notas em markdown, construir um índice semântico e permitir perguntas em
+linguagem natural, com respostas que citam a nota de origem."_
+
+Os 5 passos do pipeline estão fechados, mais duas coisas que não estavam no escopo
+original e se mostraram necessárias: indexação incremental e separação por vault.
+
+O trabalho daqui em diante é **expansão**, não MVP. Ver `docs/arquitetura.md`.
+
+### Depois do MVP — concluído até aqui
+
+- **Escopo de usuário:** servidor MCP registrado globalmente; o vault é consultável de
+  dentro de qualquer projeto. Caminhos ancorados no arquivo, não no diretório de trabalho.
+- **Registro de vaults (`vaults.json`):** as notas não precisam morar neste repositório —
+  um vault aponta para pastas de outros projetos, que continuam versionadas com o código.
+  Vários fontes por vault permitem juntar documentação oficial e anotações privadas.
+- **Embedding paralelo:** pool de concorrência 4 (ponto ótimo medido). Ganho de 1,5×,
+  não os 4× esperados — embeddar é limitado por CPU, não por espera de rede.
+- **Teto de tamanho de chunk** e resiliência a falhas na indexação.
+- **Verificação de tipos consertada** (`"types": []` no tsconfig ignorava o `@types/node`).
+
+- **Índice em memória + reindexação automática:** o servidor MCP guarda os índices
+  carregados entre chamadas e, antes de cada busca, compara contagem de arquivos e data
+  de modificação. Se algo mudou, reindexa só aquilo. Busca repetida caiu de **155ms para
+  4ms**; editar uma nota e perguntar em seguida funciona sem comando manual (0,5s).
+  A varredura de cosseno sobre 1.543 chunks custa **4ms** — o gargalo sempre foi ler o
+  JSON, nunca a matemática.
+
+### Próximo
+
+- **`save_note` via MCP** — captura conversando: _"anota que decidimos X porque Y"_ vira
+  um `.md` formatado no vault certo. É o gargalo real: sem captura barata, o vault não
+  cresce. Catálogo completo de melhorias em `docs/arquitetura.md`, seção 8.
 - **Separação por vault — CONCLUÍDA:** cada subpasta de `notes/` é um vault (um
   projeto) e gera seu próprio índice em `data/vaults/<nome>.json`. Existem dois hoje:
   `taskflow` (dados de exemplo) e `dev-second-brain` (decisões reais deste projeto).

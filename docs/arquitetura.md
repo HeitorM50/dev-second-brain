@@ -150,8 +150,12 @@ flowchart TD
 |---|---|
 | `src/ingest.ts` | Passos 1–4: lê `notes/`, fatia, embedda, salva |
 | `src/embed.ts` | Texto → vetor, via Ollama |
+| `src/indexer.ts` | Pipeline de indexação como **módulo chamável** — usado pelo CLI e pelo servidor MCP |
+| `src/vaults.ts` | **Registro de vaults**: quais pastas alimentam cada projeto; varredura recursiva de `.md` |
+| `src/concurrency.ts` | Pool de trabalhadores para embeddar em paralelo com pressão controlada |
 | `src/store.ts` | **Fronteira de armazenamento**: salvar, carregar, hash, cache de embeddings, similaridade, busca |
-| `src/ask.ts` | Recebe a pergunta e mostra os trechos mais próximos |
+| `src/ask.ts` | CLI de busca: recebe a pergunta e mostra os trechos mais próximos |
+| `src/mcp-server.ts` | **Servidor MCP**: expõe `list_vaults` e `search_notes` ao Claude Code |
 
 `store.ts` existe justamente para que trocar JSON por outra coisa no futuro seja
 reescrever um arquivo só — o resto do sistema não sabe onde os dados moram.
@@ -209,10 +213,20 @@ O MVP propriamente dito: uma pasta → um índice → uma pergunta → uma respo
       **0,5s**. O arquivo grava o modelo usado e descarta o cache inteiro se ele mudar,
       porque vetores de modelos diferentes não são comparáveis.
 
+- [x] **Passo 5** — servidor MCP (`src/mcp-server.ts`) expõe a busca ao Claude Code,
+      que passa a ser quem redige. Sem chave de API. Registrado em `.mcp.json`
+      (escopo de projeto). Handshake e chamada de ferramenta validados na mão.
+
 **O que resta:**
 
-- [ ] **Passo 5** — montar o prompt com os trechos e chamar o LLM *(decisão pendente)*
-- [ ] **Passo 5** — garantir que a resposta **cite a nota de origem** — é o critério de sucesso do MVP
+- [x] **Passo 5 validado em uso real** — o Claude Code chama `search_notes` e responde
+      citando a nota. **MVP concluído em 2026-08-11.**
+- [x] **Escopo de usuário** — registrado via `claude mcp add -s user`, disponível de
+      qualquer pasta. O `.mcp.json` de projeto foi removido para não haver duas
+      definições do mesmo servidor (escopo de projeto tem precedência e mascararia
+      uma falha no global). Caminhos ancorados em `import.meta.dirname` — sem isso, o
+      servidor iniciado de outra pasta procuraria o índice no lugar errado e devolveria
+      vazio **sem erro**.
 - [ ] **Conjunto de avaliação** — hoje a qualidade da busca é julgada por perguntas
       inventadas na hora. Montar uma lista de perguntas com a nota correta esperada,
       para medir de verdade quando algo mudar.
@@ -247,6 +261,54 @@ mensalidade.
 **O que resta:** projeto Next.js, camada sobre o núcleo, UI de busca, streaming da
 resposta, empacotamento como serviço de usuário, e um atalho global de "pergunta rápida"
 no estilo launcher.
+
+### Registro de vaults e comportamento em escala real _(2026-08-11)_
+
+**As notas não precisam morar neste repositório.** O `vaults.json` declara, para cada
+vault, quais pastas o alimentam — podendo apontar para a documentação de outro projeto,
+que continua sendo editada e versionada onde sempre esteve. Só o índice derivado mora
+aqui. Um vault pode ter **várias fontes**, o que permite combinar a documentação oficial
+de um projeto com anotações privadas que não vão para o repositório do trabalho.
+
+Pastas precisam ser declaradas de propósito: varrer o disco atrás de markdown indexaria
+README de dependência e changelog gerado, derrubando a qualidade da busca.
+
+**Números com um projeto real** (93 arquivos, ~175 mil palavras):
+
+| Medida | Valor |
+|---|---|
+| Chunks gerados | 1.543 |
+| Primeira indexação | 28 min (~1,1s por chunk) |
+| Reindexação sem mudanças | 0,6s |
+| Índice em disco | 32 MB |
+| Busca no vault | 0,9s |
+| Busca cruzada nos 3 vaults (1.596 chunks) | 0,65s |
+| Controle (assunto ausente) | 0,373 contra 0,568 de um acerto |
+
+Mesmo com o projeto grande representando **97% do índice**, a busca cruzada continua
+trazendo as notas certas dos vaults pequenos: volume não afoga relevância.
+
+### O que os dados reais quebraram
+
+Três defeitos que só apareceram fora do conjunto de exemplo:
+
+1. **Paralelismo rende 1,5×, não 4×.** Embeddar é limitado por CPU, não por espera de
+   rede — um único embedding já ocupa todos os núcleos, então não há ociosidade para
+   preencher. Medido: concorrência 4 é o ponto ótimo; acima de 8 a disputa piora tudo.
+   _Paralelismo só acelera o que está esperando._
+2. **O fatiador não sabia dividir.** Havia mínimo, não havia máximo. Seções sem
+   subtítulo (cronogramas, tabelas longas) geraram chunks de até 21 mil caracteres, que
+   estouram a janela do modelo — o Ollama responde 500. Agora existe
+   `MAX_CHUNK_LENGTH = 2000`, quebrando em fronteiras de parágrafo e repetindo o título
+   da seção em cada pedaço. Também melhora a busca: um vetor para 20 páginas vira uma
+   média sem foco.
+3. **Um chunk ruim derrubava a indexação inteira.** 1.333 trechos válidos eram perdidos
+   por causa de 1 problemático. Agora a falha é registrada, o trecho é pulado e o índice
+   é salvo.
+
+E um defeito de configuração: o `tsconfig.json` tinha `"types": []`, que desliga todos
+os pacotes de tipos globais — o `@types/node` estava instalado e ignorado desde o
+início. Como o `tsx` não checa tipos, nada reclamava. Corrigido; use `npm run typecheck`.
 
 ### Fase 3 — Ingestão facilitada 💡 ideia
 
@@ -387,7 +449,67 @@ realmente aparecem:
 
 ---
 
-## 8. Onde retomar
+## 8. Catálogo de melhorias — o backlog vivo
+
+Agrupado pelo **problema que cada ideia resolve**, não pela ordem em que surgiram.
+Marque como concluído conforme forem saindo.
+
+### 🔓 Alcance — a ferramenta existir onde se trabalha
+
+| | Ideia | O que é | Esforço |
+|---|---|---|---|
+| ✅ | Escopo de usuário | Servidor MCP global, consultável de qualquer pasta | — |
+| ✅ | Registro de vaults | `vaults.json` apontando para pastas de outros projetos | — |
+| ⬜ | Vault automático pelo contexto | Deduzir o projeto pelo diretório ou repositório e assumir o vault correspondente | 🟢 pequeno |
+
+### ✍️ Captura — o gargalo real de um segundo cérebro
+
+Notas só existem se escrevê-las for barato. Uma ferramenta de consulta sem captura
+fácil morre vazia.
+
+| | Ideia | O que é | Esforço |
+|---|---|---|---|
+| ⬜ | **`save_note` via MCP** ⭐ | Conversando: _"anota que decidimos X porque Y"_ → o Claude escreve o `.md` formatado no vault certo. É o "gerador de notas" idealizado no começo, sem precisar de app | 🟡 médio |
+| ⬜ | Captura de fim de sessão | Ao terminar um trabalho, resumir as decisões tomadas e perguntar _"registro isso?"_ | 🟡 médio |
+| ⬜ | Ingestão de fontes extensas | Apontar para documentação grande e quebrar em várias notas temáticas | 🟠 grande |
+| ⬜ | Captura a partir do git | Gerar notas de "o que mudou e por quê" a partir de commits e PRs. _Ressalva: commit não é decisão; tende a gerar muita nota de baixo valor_ | 🟠 grande |
+
+### 🔄 Frescor — o índice nunca mentir
+
+| | Ideia | O que é | Esforço |
+|---|---|---|---|
+| ✅ | **Índice em memória + invalidação por mtime** | Feito em 2026-08-11. Busca repetida no mesmo processo caiu de **155ms para 4ms**; editar uma nota e perguntar em seguida reindexa sozinho em 0,5s | — |
+| ⬜ | Ferramenta `reindex` no MCP | Disparar reindexação completa conversando, sem ir ao terminal | 🟢 trivial |
+
+### 🎯 Qualidade da recuperação
+
+| | Ideia | O que é | Esforço |
+|---|---|---|---|
+| ⬜ | **Conjunto de avaliação** ⭐ | Perguntas com a nota correta esperada + script que pontua. Sem isso, toda mudança na busca é chute — hoje a qualidade é julgada por impressão | 🟡 médio |
+| ⬜ | Busca híbrida | Combinar semântica com palavra exata. A semântica é fraca justamente em identificadores: nomes de função, códigos de erro, siglas, nomes próprios | 🟡 médio |
+| ✅ | Teto de tamanho de chunk | Evita o vetor-média sem foco e o estouro de contexto | — |
+| ⬜ | Contexto hierárquico completo | Hoje o chunk carrega o nome do arquivo e o título da seção. Incluir o caminho inteiro de títulos (`Decisão banco > Alternativas > MongoDB`) | 🟢 pequeno |
+| ⬜ | Reranking | Recuperar 20 e reordenar com modelo mais caro antes de entregar 5. _Complexidade alta para ganho marginal no volume atual_ | 🟠 grande |
+
+### 🧭 Confiança — saber se dá para acreditar
+
+| | Ideia | O que é | Esforço |
+|---|---|---|---|
+| ⬜ | Front-matter nas notas | Data, projeto, tags, status → habilita filtros que a busca semântica não sabe fazer (_"o que decidimos em julho?"_ é pergunta de data, não de significado) | 🟡 médio |
+| ⬜ | Decisões substituídas | Marcar quando uma decisão foi revista, e a busca avisar _"superado por [[outra-nota]]"_. Já há um caso real no vault: o `nomic-embed-text` | 🟡 médio |
+| ⬜ | Peso por recência | Uma decisão de ontem vale mais que uma de dois anos atrás, mesmo combinando pior com as palavras | 🟢 pequeno |
+
+### Ordem recomendada
+
+O critério é **o que destrava as outras coisas**, não o que é mais interessante:
+
+1. ~~Escopo de usuário~~ ✅ — sem isso a ferramenta não existe fora deste repo
+2. ~~Índice em memória + invalidação~~ ✅ — pré-requisito da captura: nota salva precisa ficar buscável no segundo seguinte
+3. **`save_note`** ⬅️ **próximo** — fecha o ciclo. Sem captura o vault não cresce, e um segundo cérebro que não cresce é arquivo morto
+4. **Conjunto de avaliação** — antes de mexer na qualidade da busca, é preciso saber medi-la
+5. Depois: contexto hierárquico e peso por recência (pequenos, bom retorno), front-matter, busca híbrida
+
+## 9. Onde retomar
 
 O ponto exato do trabalho vive na seção **"Estado atual"** do `docs/mvp.md` —
 é o arquivo a abrir no início de cada sessão. Este mapa é a visão de cima;

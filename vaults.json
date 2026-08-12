@@ -1,0 +1,13 @@
+{
+  "vaults": {
+    "taskflow": {
+      "sources": ["notes/taskflow"]
+    },
+    "dev-second-brain": {
+      "sources": ["notes/dev-second-brain", "docs"]
+    },
+    "grupo03": {
+      "sources": ["/home/heitor/Projects/2026.1-Grupo03"]
+    }
+  }
+}
