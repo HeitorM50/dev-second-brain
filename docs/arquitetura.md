@@ -462,7 +462,7 @@ qualquer mudança na busca.
 | Recall@1 | 87% (13/15) | nota certa em primeiro lugar |
 | Recall@5 | **100%** | o trecho certo sempre chega ao contexto do LLM |
 | MRR | 0,933 | premia ranquear melhor, não só encontrar |
-| **Separação** | **−0,056** ⚠️ | ver abaixo |
+| **Separação** | **−0,091** ⚠️ | ver abaixo |
 
 ### O que a avaliação revelou — e corrigiu
 
@@ -474,9 +474,14 @@ a de que existia "separação real entre relevante e lixo". Aquela conclusão vi
 **uma única** pergunta de controle. Com quatro, ela cai:
 
 ```
-"como trocar o óleo do câmbio"  →  0,433   casou com "## Por que trocamos"
+"como trocar o óleo do câmbio"  →  0,468   casou com "## Por que trocamos"
 "o que ficou pendente pra Ana?" →  0,377   acerto legítimo
 ```
+
+E o número **piora conforme o vault cresce**: acrescentar documentação contendo "trocar"
+empurrou esse falso positivo de 0,433 para 0,468 numa única sessão de trabalho. Rodar
+`npm run eval` periodicamente — não só ao mexer no código — é o que expõe degradação
+silenciosa desse tipo.
 
 O verbo "trocar" dominou a semelhança sem nenhuma relação de assunto, e pontuou **acima**
 de um acerto verdadeiro. Não existe limiar numérico que separe os dois grupos.
