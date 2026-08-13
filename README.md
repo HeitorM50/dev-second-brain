@@ -61,8 +61,8 @@ Dependências de produção: `@modelcontextprotocol/sdk` e `zod`. Só isso.
 | `src/indexer.ts` | Fatia, embedda e grava. **Módulo chamável** — usado pelo CLI e pelo servidor MCP, para que reindexar à mão e automaticamente rodem o mesmo código |
 | `src/embed.ts` | Texto → vetor, via `POST localhost:11434/api/embeddings` |
 | `src/concurrency.ts` | Pool de trabalhadores com limite de chamadas simultâneas |
-| `src/lexical.ts` | Busca lexical: tokenização, BM25, cobertura de termos e fusão RRF |
-| `src/store.ts` | **Fronteira de armazenamento**: gravar, carregar, hash, caches, similaridade e busca híbrida |
+| `src/lexical.ts` | Busca lexical (BM25 + fusão RRF) — implementada, hoje desligada por medição |
+| `src/store.ts` | **Fronteira de armazenamento**: gravar, carregar, hash, caches, similaridade e busca |
 | `src/notes.ts` | Criação de notas a partir de conversa: slug seguro e escrita restrita ao vault |
 | `src/mcp-server.ts` | Servidor MCP: expõe as quatro ferramentas ao Claude Code |
 | `src/ingest.ts` | CLI de indexação (casca fina sobre `indexer.ts`) |
@@ -117,13 +117,13 @@ Cada trecho carrega um **SHA-256 do seu texto**. Ao reindexar, só o que não es
 
 ## Consulta
 
-A busca é **híbrida e por varredura linear**: dois rankings sobre todos os trechos — similaridade de cosseno e BM25 lexical — combinados por *Reciprocal Rank Fusion*, que soma `peso / (60 + posição)` de cada lista. A fusão usa só as posições, o que dispensa normalizar escalas incomparáveis (cosseno vai de −1 a 1; BM25 não tem teto). O peso lexical é 0,5, escolhido varrendo valores contra a suíte de avaliação.
+A busca é **por varredura linear**: compara a pergunta com todos os trechos por similaridade de cosseno, ordena e devolve os melhores. Sem índice aproximado, sem banco.
 
-Os dois sinais se complementam por motivos opostos: o embedding acha "como deixar o app bonito" numa nota sobre Tailwind, sem palavra em comum; o BM25 acha `bge-m3` ou um código de erro exato, que o embedding dilui.
+Existe também um ranking lexical (BM25) combinável por *Reciprocal Rank Fusion*, hoje **desligado** — a medição mostrou que ele piora a profundidade da recuperação. Detalhes e números adiante.
 
 ```
 carregar o índice do disco (32 MB, 1.543 trechos) ...... 150ms
-calcular os dois rankings e fundir ....................... ~10ms
+calcular o cosseno contra todos os trechos ................ 4ms
 ```
 
 O gargalo nunca foi a matemática — era ler o JSON. Por isso o servidor MCP mantém os índices carregados em memória entre chamadas, invalidando pela data de modificação do arquivo. **A partir da segunda pergunta, a busca custa 4ms.**
@@ -139,7 +139,7 @@ Consequência prática: **você edita uma nota no editor e pergunta em seguida �
 | Ferramenta | Assinatura | Comportamento |
 |---|---|---|
 | `list_vaults` | — | Nomes dos vaults indexados |
-| `search_notes` | `query`, `vault?`, `limit?` (padrão 5) | Verifica frescor, embedda a pergunta e devolve os trechos mais próximos pela busca híbrida, com semelhança, termos em comum e origem. Sem `vault`, cruza todos |
+| `search_notes` | `query`, `vault?`, `limit?` (padrão 5) | Verifica frescor, embedda a pergunta e devolve os trechos mais próximos, com semelhança, termos em comum e origem. Sem `vault`, cruza todos |
 | `save_note` | `vault`, `title`, `content` | Cria `.md` na pasta `writeTo` do vault e indexa na hora |
 | `add_vault` | `name`, `sources[]`, `exclude?` | Registra um projeto novo: cria `notes/<name>` como pasta privada, grava em `vaults.json` com caminho relativo e indexa na hora se forem até 30 arquivos. Acima disso, orienta a rodar `npm run ingest` — indexar centenas de arquivos travaria a chamada |
 
@@ -159,29 +159,47 @@ O título vem do modelo e vira nome de arquivo, então é sanitizado: `NFD` + re
 
 ## Qualidade da busca — medida, não estimada
 
-`npm run eval` roda `eval/questions.json`: 15 perguntas com nota correta esperada e 4 controles negativos (assuntos ausentes dos vaults).
+`npm run eval` roda `eval/questions.json`: **36 perguntas** com nota correta esperada e **6 controles negativos**, cobrindo os três vaults — inclusive um com 1.543 trechos.
 
-Baseline em 2026-08-12:
+Baseline em 2026-08-13:
 
 | Métrica | Valor | Leitura |
 |---|---|---|
-| Recall@1 | 89% | nota certa em primeiro |
-| Recall@5 | **100%** | o trecho certo sempre chega ao contexto do LLM |
-| MRR | 0,939 | premia ranquear melhor, não só encontrar |
-| Separação | **+0,024** | margem entre acerto e ruído — pequena, mas positiva |
+| Recall@1 | 72% | nota certa em primeiro |
+| Recall@3 | 92% | |
+| Recall@5 | **97%** | 35 de 36 — o trecho certo chega ao contexto do LLM |
+| MRR | 0,819 | |
+| Separação | −0,027 | ⚠️ ver abaixo |
 
-**Limitação conhecida e importante:** a pontuação de similaridade é **ordinal, não probabilidade**. Ela ordena os resultados entre si; não mede relevância absoluta. Um exemplo real:
+A suíte cobre paráfrase sem palavra em comum, termo exato (identificadores e siglas), resposta em nota citada por link, busca cruzada sem vault declarado e controles negativos.
 
-```
-"como TROCAR o óleo do câmbio"  → 0,488   (casou com "## Por que TROCAMOS")
-"o que ficou pendente pra Ana?" → 0,377   (acerto legítimo)
-```
+**A única falha de Recall@5** é uma pergunta de **contagem** ("quantas personas o projeto definiu?"). RAG é estruturalmente fraco em agregar — recupera trechos, não soma fatos. Limite conhecido, não bug.
 
-Esse número **piora conforme o vault cresce** — medido três vezes num único dia, enquanto esta documentação era escrita: 0,433 → 0,468 → 0,488 no ruído, com o acerto mais fraco parado em 0,377. Cada texto novo contendo "trocar" fortaleceu o falso positivo.
+### Por que a busca lexical está desligada
 
-Rodar `npm run eval` periodicamente, e não só ao mexer no código, é o que revela esse tipo de degradação silenciosa. É também o argumento mais forte a favor da busca híbrida: enquanto a similaridade for o único sinal, o problema tende a piorar com o crescimento, não a estabilizar.
+BM25 e fusão RRF estão implementados, mas desativados por padrão (`LEXICAL_WEIGHT=0`), porque a medição não sustentou a hipótese:
 
-Nenhum limiar numérico separa os dois. Por isso quem julga relevância é o Claude, lendo o conteúdo: a descrição da ferramenta instrui a dizer "não encontrei registro" em vez de responder a partir de coincidência de palavras, e a saída avisa quando nem o melhor resultado é forte. O conserto estrutural seria busca híbrida (semântica + palavra exata), ainda no backlog.
+| Peso lexical | Recall@1 | Recall@5 | MRR |
+|---|---|---|---|
+| **0** | 72% | **97%** | 0,819 |
+| 0,3 | **75%** | 94% | 0,826 |
+| 1,0 | 75% | 92% | 0,813 |
+
+O BM25 melhora o topo e piora a profundidade — e **Recall@5 é o que manda**: se o trecho certo não entra nos 5 que vão ao contexto, o LLM não responde; sair em 1º ou 2º quase não muda nada.
+
+Além disso, as perguntas por termo exato (`bge-m3`, `GOMS`, `MIN_CHUNK_LENGTH`) passaram todas com a semântica pura. Para religar e comparar: `LEXICAL_WEIGHT=0.3 npm run eval`.
+
+### Limitação conhecida: a pontuação é ordinal
+
+A similaridade **ordena resultados entre si; não mede relevância absoluta**. Não existe limiar universal, e o teto de falso positivo sobe com o tamanho do acervo:
+
+| Escopo | Melhor falso positivo |
+|---|---|
+| vault pequeno (15 trechos) | 0,304 |
+| vault grande (1.543) | 0,380 |
+| todos os vaults (1.618) | **0,404** |
+
+O pior acerto legítimo fica em 0,377 — ou seja, **nenhum corte numérico separa os dois grupos**, e a busca cruzada é o pior caso. Por isso quem julga relevância é o Claude, lendo o conteúdo: a descrição da ferramenta instrui a dizer "não encontrei registro" em vez de responder por coincidência de palavras, e a saída avisa quando nem o melhor resultado é forte.
 
 ## Configuração de vaults
 

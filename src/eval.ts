@@ -16,7 +16,8 @@ const TOP_K = 5;
 
 type Question = {
     id: string;
-    vault: string;
+    /** Omitido = busca cruzada em todos os vaults, como o Claude faz quando não sabe o projeto. */
+    vault?: string;
     query: string;
     /** Notas aceitas como corretas. Vazio = controle negativo: o certo é não achar nada. */
     expected: string[];
@@ -97,6 +98,10 @@ let positives = 0;
 
 for (const question of questions) {
     const searchable = getSearchable(question.vault);
+    if (searchable.chunks.length === 0) {
+        console.error(`[aviso] ${question.id}: vault "${question.vault}" sem índice — pulando.`);
+        continue;
+    }
     const queryEmbedding = await embed(question.query);
 
     const semanticHits = search(queryEmbedding, searchable.chunks, TOP_K);

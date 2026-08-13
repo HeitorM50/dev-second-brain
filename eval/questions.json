@@ -161,6 +161,146 @@
       ]
     },
     {
+      "id": "g3-01",
+      "vault": "grupo03",
+      "query": "quais personagens ficticios representam os usuarios do sistema?",
+      "expected": [
+        "docs/analise-requisitos/personas.md"
+      ]
+    },
+    {
+      "id": "g3-02",
+      "vault": "grupo03",
+      "query": "o que ajuda quem nao sabe classificar a propria reclamacao?",
+      "expected": [
+        "docs/analise-requisitos/funcionalidades.md"
+      ]
+    },
+    {
+      "id": "g3-03",
+      "vault": "grupo03",
+      "query": "como evitar que o cidadao digite tudo a mao ao anexar comprovantes?",
+      "expected": [
+        "docs/analise-requisitos/funcionalidades.md"
+      ]
+    },
+    {
+      "id": "g3-04",
+      "vault": "grupo03",
+      "query": "quais fatores de qualidade de uso foram priorizados?",
+      "expected": [
+        "docs/analise-requisitos/metas-usabilidade.md"
+      ]
+    },
+    {
+      "id": "g3-05",
+      "vault": "grupo03",
+      "query": "que navegadores o portal precisa suportar?",
+      "expected": [
+        "docs/analise-requisitos/caracteristicas-plataforma.md"
+      ]
+    },
+    {
+      "id": "g3-06",
+      "vault": "grupo03",
+      "query": "como as cores e a tipografia devem ser aplicadas na interface?",
+      "expected": [
+        "docs/analise-requisitos/guia-estilo.md"
+      ]
+    },
+    {
+      "id": "g3-07",
+      "vault": "grupo03",
+      "query": "que tecnicas foram usadas para levantar o perfil dos usuarios?",
+      "expected": [
+        "docs/analise-requisitos/perfil-usuario.md"
+      ]
+    },
+    {
+      "id": "g3-08",
+      "vault": "grupo03",
+      "query": "GOMS",
+      "expected": [
+        "docs/analise-requisitos/analise-tarefas.md",
+        "docs/analise-requisitos/metas-usabilidade.md"
+      ]
+    },
+    {
+      "id": "g3-09",
+      "vault": "grupo03",
+      "query": "Assistente de Triagem Guiada",
+      "expected": [
+        "docs/analise-requisitos/funcionalidades.md",
+        "docs/analise-requisitos/metas-usabilidade.md",
+        "docs/design-avaliacao/nivel-2/prototipos-papel.md",
+        "docs/design-avaliacao/nivel-3/prototipo-alta-fidelidade-triagem-guiada.md"
+      ]
+    },
+    {
+      "id": "dsb-09",
+      "vault": "dev-second-brain",
+      "query": "MIN_CHUNK_LENGTH",
+      "expected": [
+        "mvp.md"
+      ]
+    },
+    {
+      "id": "dsb-10",
+      "vault": "dev-second-brain",
+      "query": "import.meta.dirname",
+      "expected": [
+        "arquitetura.md"
+      ]
+    },
+    {
+      "id": "dsb-11",
+      "vault": "dev-second-brain",
+      "query": "writeTo",
+      "expected": [
+        "mvp.md",
+        "arquitetura.md"
+      ]
+    },
+    {
+      "id": "tf-12",
+      "vault": "taskflow",
+      "query": "quais alternativas de banco foram descartadas na reuniao de 10 de julho?",
+      "expected": [
+        "decisao-banco-de-dados.md"
+      ]
+    },
+    {
+      "id": "tf-13",
+      "vault": "taskflow",
+      "query": "a reuniao definiu o frontend; quais os motivos dessa escolha?",
+      "expected": [
+        "stack-frontend.md"
+      ]
+    },
+    {
+      "id": "x-01",
+      "query": "por que descartamos MongoDB?",
+      "expected": [
+        "decisao-banco-de-dados.md"
+      ]
+    },
+    {
+      "id": "x-02",
+      "query": "quantas personas o projeto de IHC definiu?",
+      "expected": [
+        "docs/analise-requisitos/personas.md"
+      ]
+    },
+    {
+      "id": "x-03",
+      "query": "qual modelo de embedding esta em uso?",
+      "expected": [
+        "decisao-modelo-embedding.md",
+        "arquitetura.md",
+        "mvp.md"
+      ]
+    },
+    {
       "id": "neg-01",
       "vault": "taskflow",
       "query": "quantos litros de tinta para pintar uma parede de doze metros",
@@ -182,6 +322,17 @@
       "id": "neg-04",
       "vault": "dev-second-brain",
       "query": "quem venceu a final do campeonato de volei feminino",
+      "expected": []
+    },
+    {
+      "id": "neg-05",
+      "vault": "grupo03",
+      "query": "qual a dosagem de fertilizante para orquideas no verao",
+      "expected": []
+    },
+    {
+      "id": "neg-06",
+      "query": "como afinar as cordas de um violao de aco",
       "expected": []
     }
   ]

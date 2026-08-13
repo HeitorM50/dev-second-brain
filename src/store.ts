@@ -270,20 +270,29 @@ const FUSION_DEPTH = 50;
 /**
  * Peso do ranking lexical na fusão, relativo ao semântico (que vale 1).
  *
- * Escolhido varrendo valores contra `npm run eval`, não por intuição. Com peso 1
- * (os dois valendo igual), o BM25 puxava para cima trechos que só compartilhavam
- * uma palavra comum — "app" casando com "TaskFlow é um app de gerenciamento" — e o
- * MRR caía de 0,947 para 0,932.
+ * **Padrão 0 — a busca lexical está desligada, e isso foi uma decisão medida.**
  *
- * Em 0,5 o ranking custa quase nada (MRR 0,939) e a margem que separa acerto de
- * ruído sobe de +0,001 para +0,024. Ficamos com essa troca: uma pergunta caindo uma
- * posição vale menos que a defesa contra responder com confiança a partir de lixo.
+ * Varrido contra `npm run eval` com 36 perguntas em três vaults, incluindo um de
+ * 1.543 trechos:
  *
- * ⚠️ Ressalva honesta: com a suíte atual, nenhum peso melhora o ranking em relação à
- * semântica pura. A busca lexical existe pelo ponto cego conhecido (identificadores,
- * códigos, siglas), que o conjunto de avaliação ainda não cobre bem.
+ * | peso | Recall@1 | Recall@3 | Recall@5 | MRR   |
+ * |------|----------|----------|----------|-------|
+ * | 0    | 72%      | **92%**  | **97%**  | 0,819 |
+ * | 0,3  | **75%**  | 89%      | 94%      | 0,826 |
+ * | 1,0  | 75%      | 86%      | 92%      | 0,813 |
+ *
+ * O BM25 melhora o topo e piora a profundidade. Para RAG, **Recall@5 manda**: se o
+ * trecho certo não entra nos 5 que vão ao contexto, o LLM não tem como responder —
+ * ao passo que sair em 1º ou 2º quase não muda a resposta final.
+ *
+ * E o argumento que justificava o BM25 não se sustentou: as perguntas por termo
+ * exato (`bge-m3`, `GOMS`, `MIN_CHUNK_LENGTH`, `import.meta.dirname`) passaram todas
+ * com a semântica pura. O `bge-m3` lida bem com termos raros.
+ *
+ * O código fica: o ponto cego lexical é real em outros corpora (identificadores de
+ * código, códigos de erro em log). Ligar é `LEXICAL_WEIGHT=0.3 npm run eval` e medir.
  */
-const LEXICAL_WEIGHT = Number(process.env["LEXICAL_WEIGHT"] ?? 0.5);
+const LEXICAL_WEIGHT = Number(process.env["LEXICAL_WEIGHT"] ?? 0);
 
 /**
  * Busca híbrida: combina similaridade semântica com BM25 lexical via Reciprocal
@@ -308,12 +317,18 @@ export function hybridSearch(
     const queryTokens = tokenize(queryText);
 
     const cosineScores = chunks.map((chunk) => cosineSimilarity(queryEmbedding, chunk.embedding));
-    const bm25Scores = scoreBM25(lexical, queryTokens);
 
-    const fused = reciprocalRankFusion([
-        { ranking: rankingOf(cosineScores, FUSION_DEPTH), weight: 1 },
-        { ranking: rankingOf(bm25Scores, FUSION_DEPTH), weight: LEXICAL_WEIGHT },
-    ]);
+    // Com peso 0 o BM25 não influencia o resultado — não vale varrer o acervo à toa.
+    const bm25Scores = LEXICAL_WEIGHT > 0
+        ? scoreBM25(lexical, queryTokens)
+        : new Array<number>(chunks.length).fill(0);
+
+    const rankings = [{ ranking: rankingOf(cosineScores, FUSION_DEPTH), weight: 1 }];
+    if (LEXICAL_WEIGHT > 0) {
+        rankings.push({ ranking: rankingOf(bm25Scores, FUSION_DEPTH), weight: LEXICAL_WEIGHT });
+    }
+
+    const fused = reciprocalRankFusion(rankings);
 
     return [...fused.entries()]
         .sort((a, b) => b[1] - a[1])

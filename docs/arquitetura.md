@@ -4,7 +4,7 @@ Visão geral do sistema: o que já existe, o que é o MVP, e para onde ele cresc
 Complementa o `docs/mvp.md` (que guarda as **decisões** e o porquê de cada uma);
 aqui o foco é o **desenho** — como as peças se encaixam.
 
-_Última atualização: 2026-08-12_
+_Última atualização: 2026-08-13_
 
 ---
 
@@ -23,14 +23,13 @@ flowchart LR
         E3["Vaults por projeto<br/>+ registro conversacional"]
         E4["Captura por conversa<br/>save_note"]
         E5["Indexação incremental<br/>+ frescor automático"]
-        E6["Suíte de avaliação<br/>+ busca híbrida"]
+        E6["Suíte de avaliação<br/>36 perguntas, 3 vaults"]
     end
 
-    AGORA["🎯 <b>AGORA</b><br/>Ampliar a suíte<br/>de avaliação"]
+    AGORA["🎯 <b>AGORA</b><br/>Expansão por grafo<br/>seguir links [[...]]"]
 
     subgraph PROXIMOS["⏭️ PRÓXIMOS — qualidade e confiança"]
         direction TB
-        P1["Expansão por grafo<br/>seguir links [[...]]"]
         P2["Contexto hierárquico<br/>no chunk"]
         P3["Front-matter<br/>+ decisões substituídas"]
         P4["Peso por recência"]
@@ -53,33 +52,33 @@ flowchart LR
 
     class E1,E2,E3,E4,E5,E6 feito
     class AGORA agora
-    class P1,P2,P3,P4 proximo
+    class P2,P3,P4 proximo
     class D1,D2,D3,D4 depois
 ```
 
 ### 🎯 O procedimento a executar agora
 
-**Ampliar a suíte de avaliação** — e isto vem antes de qualquer melhoria nova, por um
-motivo concreto: com **Recall@5 em 100%** em toda configuração testada, a suíte hoje
-detecta regressão mas **não consegue medir ganho**. Ela já me enganou duas vezes (ver
-seções 8 e 9). Implementar melhorias sem conseguir medi-las é trocar engenharia por fé.
+**Expansão por grafo** — fazer a busca seguir os links `[[...]]` entre notas.
+
+Por que este e não outro: a suíte de avaliação **já contém os testes que medem essa
+melhoria**, escritos de propósito antes de ela existir. As perguntas `tf-12` e `tf-13`
+têm a resposta numa nota **citada por link**, não na mais parecida — e hoje ambas saem
+em 2º e 3º lugar. Se a expansão funcionar, elas sobem para 1º; se não funcionar, o
+número dirá.
+
+Como funciona a ideia: depois de recuperar os melhores trechos, ler os `[[links]]` que
+eles contêm e trazer também os trechos das notas citadas. Aproveita um sinal que **o
+autor criou de propósito** ao ligar as notas — informação que nenhum embedding tem.
 
 O que fazer, em ordem:
 
-1. **Acrescentar perguntas difíceis** a `eval/questions.json`, especialmente:
-   - consultas por **identificador exato** (nome de função, constante, código de erro,
-     sigla) — o ponto cego declarado da busca semântica e a justificativa do BM25;
-   - perguntas cuja resposta está numa nota **citada por link**, e não na mais parecida
-     — essas medem a expansão por grafo antes de ela existir;
-   - perguntas **ambíguas entre projetos**, para verificar o isolamento por vault.
-2. **Incluir o vault `grupo03`** nas perguntas. Hoje a suíte só cobre `taskflow` e
-   `dev-second-brain`, ambos pequenos; o vault de 1.543 trechos não é avaliado.
-3. **Rodar `npm run eval`** e confirmar que Recall@5 saiu de 100% — se continuar em 100%,
-   as perguntas ainda estão fáceis demais.
-4. Só então voltar ao catálogo (seção 9) e implementar a próxima melhoria, medindo
-   antes e depois.
+1. Registrar, na indexação, quais notas cada chunk cita (extrair `[[...]]` do texto).
+2. Na busca, após o top-k por similaridade, puxar os trechos das notas citadas e
+   reordenar dando a elas uma posição própria na fusão.
+3. `npm run eval` **antes e depois**, olhando especificamente `tf-12` e `tf-13`.
+4. Se Recall@5 cair, reverter — profundidade vale mais que topo (ver seção 8).
 
-> **Regra ao escrever perguntas:** nunca cite o texto dos controles negativos na
+> **Regra ao escrever perguntas novas:** nunca cite o texto dos controles negativos na
 > documentação. O vault `dev-second-brain` indexa `docs/`, e isso já contaminou a suíte
 > uma vez (seção 8).
 
@@ -90,7 +89,7 @@ O que fazer, em ordem:
 | 🔓 **Alcance** | ✅ resolvido | MCP global; vaults apontam para qualquer pasta; `add_vault` por conversa |
 | ✍️ **Captura** | 🟡 parcial | `save_note` funciona. Faltam captura de fim de sessão e ingestão de fontes extensas |
 | 🔄 **Frescor** | ✅ resolvido | Índice em memória + reindexação automática por data de modificação |
-| 🎯 **Qualidade** | 🟡 parcial | Busca híbrida entregue, mas **não comprovada** — a suíte não tem folga para medir |
+| 🎯 **Qualidade** | 🟡 parcial | Suíte com 36 perguntas mede de verdade (Recall@5 97%). Busca híbrida foi construída, medida e **desligada** — piorava a profundidade |
 | 🧭 **Confiança** | 🔴 aberto | Sem front-matter, sem marcação de decisão substituída, sem peso por recência |
 | 🖥️ **Interface** | ⬜ adiada | Fase 2 virou opcional: o Claude Code já é a interface |
 
@@ -101,6 +100,8 @@ O que fazer, em ordem:
 - **Trocar o armazenamento.** JSON aguenta muito além do volume atual; os gatilhos de
   migração estão na seção 7.
 - **Reranking.** Complexidade alta para ganho marginal neste volume.
+- **Reativar a busca lexical sem medir.** Foi desligada com dado (seção 8); religar é
+  `LEXICAL_WEIGHT=0.3 npm run eval` e comparar, não editar o padrão por intuição.
 - **Captura a partir do git.** Commit não é decisão; geraria ruído que afoga as notas boas.
 
 ---
@@ -555,22 +556,71 @@ realmente aparecem:
 e 4 controles negativos (assuntos que não existem nos vaults). Rode antes e depois de
 qualquer mudança na busca.
 
-**Baseline em 2026-08-12** — 19 perguntas com nota esperada + 4 controles negativos,
-nos vaults `taskflow` e `dev-second-brain`:
+**Baseline em 2026-08-13** — 36 perguntas com nota esperada + 6 controles negativos,
+cobrindo os três vaults (incluindo o `grupo03`, com 1.543 trechos):
 
-| Métrica | Semântica pura | Híbrida (peso lexical 0,5) |
+| Métrica | Valor | Leitura |
 |---|---|---|
-| Recall@1 | 89% | 89% |
-| Recall@3 | 100% | 100% |
-| Recall@5 | 100% | 100% |
-| MRR | 0,947 | 0,939 |
-| Separação | +0,001 | **+0,024** |
+| Recall@1 | 72% | nota certa em primeiro |
+| Recall@3 | 92% | |
+| Recall@5 | **97%** | 35 de 36 — o trecho certo chega ao contexto do LLM |
+| MRR | 0,819 | |
+| Separação | −0,027 | pior acerto 0,377 vs. melhor falso 0,404 |
 
-**Limite da suíte:** Recall@5 é 100% em todas as configurações testadas — não há
-folga para medir melhora. Enquanto isso não mudar, a avaliação serve para detectar
-**regressão**, não para provar ganho. Melhorá-la exige perguntas mais difíceis,
-especialmente consultas por identificador exato (nome de função, código de erro,
-sigla), que é o ponto cego declarado da busca semântica.
+A suíte anterior tinha 19 perguntas e **Recall@5 de 100%** — ou seja, nenhuma folga
+para medir melhora. Ao incluir o vault grande e perguntas mais difíceis, ela passou a
+discriminar: hoje detecta ganho, não só regressão.
+
+**Categorias que ela cobre agora:** paráfrase sem palavra em comum, termo exato
+(identificadores e siglas), resposta em nota citada por link, busca cruzada sem vault
+declarado, e controles negativos por vault e cruzados.
+
+**A única falha de Recall@5** é `x-02` — _"quantas personas o projeto definiu?"_. É uma
+pergunta de **contagem**, que exige agregar informação em vez de recuperar um trecho;
+RAG é estruturalmente fraco nisso. Fica registrada como limite conhecido, não como bug.
+
+### 🔬 Busca híbrida: implementada, medida e **desligada**
+
+BM25 + cosseno com fusão RRF foram construídos e depois desativados por padrão
+(`LEXICAL_WEIGHT = 0`), porque o dado não sustentou a hipótese:
+
+| Peso lexical | Recall@1 | Recall@3 | Recall@5 | MRR |
+|---|---|---|---|---|
+| **0** | 72% | **92%** | **97%** | 0,819 |
+| 0,3 | **75%** | 89% | 94% | 0,826 |
+| 1,0 | 75% | 86% | 92% | 0,813 |
+
+O BM25 melhora o topo e piora a profundidade. **Para RAG, Recall@5 manda**: se o trecho
+certo não entra nos 5 que vão ao contexto, o LLM não tem como responder — enquanto sair
+em 1º ou 2º quase não muda a resposta final.
+
+E o argumento que justificava a busca lexical caiu: as perguntas por termo exato
+(`bge-m3`, `GOMS`, `MIN_CHUNK_LENGTH`, `import.meta.dirname`, `writeTo`) **passaram
+todas com a semântica pura**. O `bge-m3` lida bem com termos raros; o ponto cego que
+motivou o BM25 não aparece neste corpus.
+
+O código permanece, com peso configurável: o ponto cego lexical é real em outros
+acervos (identificadores de código, códigos de erro em log). Ligar e medir é
+`LEXICAL_WEIGHT=0.3 npm run eval`.
+
+> **Lição de método:** com 19 perguntas a híbrida parecia melhor; com 36 e um corpus
+> realista, é pior. Conjunto de teste pequeno não mede — decora.
+
+### 📉 Separação: o efeito real do tamanho do acervo
+
+Com controles limpos, medindo por vault e cruzado:
+
+| Escopo | Melhor falso positivo |
+|---|---|
+| `taskflow` (15 trechos) | 0,304 |
+| `dev-second-brain` (60) | 0,376 |
+| `grupo03` (1.543) | 0,380 |
+| **todos os vaults** (1.618) | **0,404** |
+
+Quanto maior o acervo, maior a chance de alguma coincidência pontuar alto — e o pior
+acerto legítimo fica em 0,377. **Nenhum limiar fixo separa os dois grupos**, e a busca
+cruzada é o pior caso. Por isso quem julga relevância é o Claude lendo o conteúdo, não
+um número: ver a mitigação adotada abaixo.
 
 ### ⚠️ Contaminação do conjunto de teste — um erro real, e como foi descoberto
 
@@ -685,7 +735,7 @@ fácil morre vazia.
 | | Ideia | O que é | Esforço |
 |---|---|---|---|
 | ✅ | **Conjunto de avaliação** | Feito em 2026-08-12. `eval/questions.json` + `npm run eval`. Baseline e o que ele revelou logo abaixo | — |
-| ✅ | **Busca híbrida** | Feita em 2026-08-12. BM25 + cosseno com fusão RRF, peso lexical 0,5 escolhido por varredura contra a suíte. Separação subiu de +0,001 para +0,024; o ranking custou 0,008 de MRR. **A suíte atual não consegue provar ganho de ranking** — a lexical existe pelo ponto cego conhecido (identificadores, códigos, siglas), ainda mal coberto pelas perguntas | — |
+| 🔬 | **Busca híbrida** | Construída em 2026-08-12 (BM25 + RRF) e **desligada em 2026-08-13 por medição**: piora Recall@5 de 97% para 94%, e as perguntas por termo exato passam sem ela. Código mantido; ligar é `LEXICAL_WEIGHT=0.3`. Ver seção 8 | — |
 | ✅ | Teto de tamanho de chunk | Evita o vetor-média sem foco e o estouro de contexto | — |
 | ⬜ | Contexto hierárquico completo | Hoje o chunk carrega o nome do arquivo e o título da seção. Incluir o caminho inteiro de títulos (`Decisão banco > Alternativas > MongoDB`) | 🟢 pequeno |
 | ⬜ | **Expansão por grafo (links `[[...]]`)** | Depois de achar os melhores trechos, seguir os wikilinks que eles contêm e trazer também os trechos das notas citadas. Aproveita um sinal que **o autor criou de propósito** ao ligar as notas — informação que nenhum embedding tem. Ex.: a nota da reunião diz "escolhemos Postgres, detalhes em `[[decisao-banco]]`"; hoje a justificativa completa pode ficar de fora | 🟡 médio |
