@@ -462,7 +462,7 @@ qualquer mudança na busca.
 | Recall@1 | 87% (13/15) | nota certa em primeiro lugar |
 | Recall@5 | **100%** | o trecho certo sempre chega ao contexto do LLM |
 | MRR | 0,933 | premia ranquear melhor, não só encontrar |
-| **Separação** | **−0,091** ⚠️ | ver abaixo |
+| **Separação** | **−0,111** ⚠️ | ver abaixo — e piorando |
 
 ### O que a avaliação revelou — e corrigiu
 
@@ -478,10 +478,26 @@ a de que existia "separação real entre relevante e lixo". Aquela conclusão vi
 "o que ficou pendente pra Ana?" →  0,377   acerto legítimo
 ```
 
-E o número **piora conforme o vault cresce**: acrescentar documentação contendo "trocar"
-empurrou esse falso positivo de 0,433 para 0,468 numa única sessão de trabalho. Rodar
-`npm run eval` periodicamente — não só ao mexer no código — é o que expõe degradação
-silenciosa desse tipo.
+E o número **piora conforme o vault cresce**. Três medições no mesmo dia, à medida que
+esta própria documentação era escrita:
+
+| Momento | Melhor falso positivo | Separação |
+|---|---|---|
+| Primeira medição | 0,433 | −0,056 |
+| Após editar `arquitetura.md` | 0,468 | −0,091 |
+| Após mais edições | 0,488 | −0,111 |
+
+O acerto mais fraco ficou parado em 0,377 nas três; o que subiu foi o **ruído**. Cada
+texto novo contendo "trocar/trocamos" deixou o falso positivo do óleo de câmbio mais
+forte. É degradação monotônica e previsível: quanto mais conteúdo, maior a chance de
+alguma coincidência lexical pontuar alto.
+
+Duas conclusões práticas:
+
+1. Rodar `npm run eval` **periodicamente**, não só ao mexer no código — o vault degrada
+   sozinho.
+2. Isto é argumento forte a favor da **busca híbrida**: enquanto a similaridade for o
+   único sinal, o problema tende a piorar com o crescimento do vault, não a estabilizar.
 
 O verbo "trocar" dominou a semelhança sem nenhuma relação de assunto, e pontuou **acima**
 de um acerto verdadeiro. Não existe limiar numérico que separe os dois grupos.
@@ -512,6 +528,7 @@ Marque como concluído conforme forem saindo.
 |---|---|---|---|
 | ✅ | Escopo de usuário | Servidor MCP global, consultável de qualquer pasta | — |
 | ✅ | Registro de vaults | `vaults.json` apontando para pastas de outros projetos | — |
+| ✅ | **`add_vault` via MCP** | Feito em 2026-08-12. Registrar um projeto virou conversa, de dentro dele: cria a pasta de anotações privadas, grava em `vaults.json` com caminho relativo, indexa na hora se forem poucos arquivos, e devolve o bloco de `CLAUDE.md` pronto para colar | — |
 | ⬜ | Vault automático pelo contexto | Deduzir o projeto pelo diretório ou repositório e assumir o vault correspondente | 🟢 pequeno |
 
 ### ✍️ Captura — o gargalo real de um segundo cérebro
@@ -541,6 +558,7 @@ fácil morre vazia.
 | ⬜ | Busca híbrida | Combinar semântica com palavra exata. A semântica é fraca justamente em identificadores: nomes de função, códigos de erro, siglas, nomes próprios | 🟡 médio |
 | ✅ | Teto de tamanho de chunk | Evita o vetor-média sem foco e o estouro de contexto | — |
 | ⬜ | Contexto hierárquico completo | Hoje o chunk carrega o nome do arquivo e o título da seção. Incluir o caminho inteiro de títulos (`Decisão banco > Alternativas > MongoDB`) | 🟢 pequeno |
+| ⬜ | **Expansão por grafo (links `[[...]]`)** | Depois de achar os melhores trechos, seguir os wikilinks que eles contêm e trazer também os trechos das notas citadas. Aproveita um sinal que **o autor criou de propósito** ao ligar as notas — informação que nenhum embedding tem. Ex.: a nota da reunião diz "escolhemos Postgres, detalhes em `[[decisao-banco]]`"; hoje a justificativa completa pode ficar de fora | 🟡 médio |
 | ⬜ | Reranking | Recuperar 20 e reordenar com modelo mais caro antes de entregar 5. _Complexidade alta para ganho marginal no volume atual_ | 🟠 grande |
 
 ### 🧭 Confiança — saber se dá para acreditar

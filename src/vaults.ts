@@ -4,7 +4,7 @@
 // a pasta de documentação de outro projeto, indexando-a onde ela já está — sem cópia
 // e sem risco de a cópia envelhecer.
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 
 export type VaultConfig = {
@@ -36,6 +36,26 @@ export function loadVaultConfig(): Record<string, VaultConfig> {
     }
     const parsed = JSON.parse(readFileSync(CONFIG_PATH, "utf-8")) as VaultsFile;
     return parsed.vaults ?? {};
+}
+
+/** Regrava vaults.json preservando o comentário do topo, se houver. */
+export function saveVaultConfig(vaults: Record<string, VaultConfig>): void {
+    const existing = existsSync(CONFIG_PATH)
+        ? (JSON.parse(readFileSync(CONFIG_PATH, "utf-8")) as VaultsFile & { _comment?: string })
+        : undefined;
+
+    const file: Record<string, unknown> = {};
+    if (existing?._comment !== undefined) {
+        file["_comment"] = existing._comment;
+    }
+    file["vaults"] = vaults;
+
+    writeFileSync(CONFIG_PATH, `${JSON.stringify(file, null, 2)}\n`, "utf-8");
+}
+
+/** Caminho absoluto da pasta padrão de anotações privadas de um vault. */
+export function privateNotesDir(vault: string): string {
+    return join(PROJECT_ROOT, "notes", vault);
 }
 
 /** Caminhos configurados são relativos à raiz do projeto, salvo se já forem absolutos. */

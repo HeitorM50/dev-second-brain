@@ -1,15 +1,23 @@
 {
   "vaults": {
     "taskflow": {
-      "sources": ["notes/taskflow"],
+      "sources": [
+        "notes/taskflow"
+      ],
       "writeTo": "notes/taskflow"
     },
     "dev-second-brain": {
-      "sources": ["notes/dev-second-brain", "docs"],
+      "sources": [
+        "notes/dev-second-brain",
+        "docs"
+      ],
       "writeTo": "notes/dev-second-brain"
     },
     "grupo03": {
-      "sources": ["/home/heitor/Projects/2026.1-Grupo03", "notes/grupo03"],
+      "sources": [
+        "/home/heitor/Projects/2026.1-Grupo03",
+        "notes/grupo03"
+      ],
       "writeTo": "notes/grupo03"
     }
   }

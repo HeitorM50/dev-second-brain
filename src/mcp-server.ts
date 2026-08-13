@@ -8,6 +8,8 @@
 // console.log() aqui corromperia as mensagens e derrubaria a conexão.
 // Para depurar, use console.error(), que vai para stderr.
 
+import { existsSync, mkdirSync } from "node:fs";
+
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -16,7 +18,13 @@ import { embed } from "./embed.js";
 import { buildVaultIndex, isVaultStale } from "./indexer.js";
 import { saveNote } from "./notes.js";
 import { listVaults, loadChunks, search, type SearchHit } from "./store.js";
-import { loadVaultConfig } from "./vaults.js";
+import {
+    listVaultFiles,
+    loadVaultConfig,
+    privateNotesDir,
+    saveVaultConfig,
+    type VaultConfig,
+} from "./vaults.js";
 
 const DEFAULT_LIMIT = 5;
 
@@ -210,6 +218,128 @@ server.registerTool(
                 text: `Nota criada em ${vault}/${result.label}.${indexNote}`,
             }],
         };
+    },
+);
+
+// Acima deste número de arquivos, a primeira indexação passa de alguns minutos e
+// travaria a chamada da ferramenta. Nesse caso o vault é registrado e a indexação
+// fica por conta do `npm run ingest`.
+const INSTANT_INDEX_FILE_LIMIT = 30;
+
+server.registerTool(
+    "add_vault",
+    {
+        title: "Registrar projeto no segundo cérebro",
+        description:
+            "Cadastra um projeto como vault, para que suas notas e documentação virem "
+            + "memória consultável. Use quando o Heitor pedir para 'adicionar este projeto', "
+            + "'registrar no segundo cérebro' ou equivalente — inclusive estando dentro de "
+            + "outro projeto. "
+            + "Passe em `sources` os caminhos ABSOLUTOS das pastas com documentação: "
+            + "prefira a pasta específica de documentação (ex.: <projeto>/docs) em vez da "
+            + "raiz do repositório, para não indexar README de dependência e arquivos "
+            + "gerados. Uma pasta de anotações privadas é criada automaticamente e será o "
+            + "destino de save_note — a documentação do projeto nunca é escrita.",
+        inputSchema: {
+            name: z.string().describe(
+                "Nome curto do vault, em minúsculas, sem espaço. É como o projeto será "
+                + "chamado nas buscas. Ex.: 'crianex'.",
+            ),
+            sources: z.array(z.string()).min(1).describe(
+                "Caminhos absolutos das pastas com documentação a indexar.",
+            ),
+            exclude: z.array(z.string()).optional().describe(
+                "Trechos de caminho a ignorar, ex.: ['CHANGELOG', 'api-reference'].",
+            ),
+        },
+    },
+    async ({ name, sources, exclude }) => {
+        const config = loadVaultConfig();
+
+        if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) {
+            return {
+                content: [{ type: "text", text: `Nome inválido: "${name}". Use minúsculas, números e hífens.` }],
+                isError: true,
+            };
+        }
+        if (config[name] !== undefined) {
+            return {
+                content: [{ type: "text", text: `O vault "${name}" já existe. Edite vaults.json para alterá-lo.` }],
+                isError: true,
+            };
+        }
+
+        const missing = sources.filter((source) => !existsSync(source));
+        if (missing.length > 0) {
+            return {
+                content: [{ type: "text", text: `Pasta(s) não encontrada(s): ${missing.join(", ")}` }],
+                isError: true,
+            };
+        }
+
+        // Pasta pessoal do vault: é para lá que save_note escreve, nunca para a
+        // documentação do projeto — que pode estar num repositório de trabalho.
+        // Gravada no config como caminho relativo, para o repositório continuar
+        // funcionando se for movido de lugar.
+        const notesDir = privateNotesDir(name);
+        const notesDirRelative = `notes/${name}`;
+        mkdirSync(notesDir, { recursive: true });
+
+        const vaultConfig: VaultConfig = {
+            sources: [...sources, notesDirRelative],
+            ...(exclude !== undefined ? { exclude } : {}),
+            writeTo: notesDirRelative,
+        };
+
+        config[name] = vaultConfig;
+        saveVaultConfig(config);
+
+        const files = listVaultFiles(name, vaultConfig);
+        const lines = [
+            `Vault "${name}" registrado com ${files.length} arquivos .md.`,
+            `Anotações privadas em: ${notesDir}`,
+        ];
+
+        if (files.length <= INSTANT_INDEX_FILE_LIMIT) {
+            try {
+                const result = await buildVaultIndex(name, vaultConfig);
+                lines.push(
+                    `Indexado: ${result.chunkCount} trechos em ${result.elapsedSeconds.toFixed(1)}s. `
+                    + "Já pode fazer perguntas sobre este projeto.",
+                );
+            } catch (error) {
+                const detail = error instanceof Error ? error.message : String(error);
+                lines.push(`A indexação falhou (${detail}). Rode \`npm run ingest\` no dev-second-brain.`);
+            }
+        } else {
+            lines.push(
+                `São muitos arquivos para indexar agora (limite: ${INSTANT_INDEX_FILE_LIMIT}). `
+                + "Rode `npm run ingest` no diretório do dev-second-brain — pode levar alguns "
+                + "minutos na primeira vez. Depois disso, atualizações são automáticas.",
+            );
+        }
+
+        lines.push(
+            "",
+            "Sugira ao Heitor acrescentar este bloco ao CLAUDE.md do projeto, para que as "
+            + "decisões passem a ser registradas sem ele precisar pedir toda vez:",
+            "",
+            "```markdown",
+            "## Registro de decisões no segundo cérebro",
+            "",
+            `Este projeto usa o dev-second-brain (MCP). Vault: **${name}**.`,
+            "",
+            "- Ao tomar uma decisão técnica (escolha de biblioteca, mudança de abordagem,",
+            `  alternativa descartada), registre com \`save_note\` no vault \`${name}\`,`,
+            "  incluindo sempre o **porquê** e as alternativas consideradas.",
+            `- Antes de propor mudança estrutural, consulte \`search_notes\` no vault \`${name}\``,
+            "  para não contrariar algo já decidido.",
+            "- NÃO registre mudanças triviais (renomear variável, typo, formatação):",
+            "  nota é para decisão, não para diff.",
+            "```",
+        );
+
+        return { content: [{ type: "text", text: lines.join("\n") }] };
     },
 );
 

@@ -138,6 +138,7 @@ Consequência prática: **você edita uma nota no editor e pergunta em seguida �
 | `list_vaults` | — | Nomes dos vaults indexados |
 | `search_notes` | `query`, `vault?`, `limit?` (padrão 5) | Verifica frescor, embedda a pergunta, devolve os trechos mais próximos com pontuação e origem. Sem `vault`, cruza todos |
 | `save_note` | `vault`, `title`, `content` | Cria `.md` na pasta `writeTo` do vault e indexa na hora |
+| `add_vault` | `name`, `sources[]`, `exclude?` | Registra um projeto novo: cria `notes/<name>` como pasta privada, grava em `vaults.json` com caminho relativo e indexa na hora se forem até 30 arquivos. Acima disso, orienta a rodar `npm run ingest` — indexar centenas de arquivos travaria a chamada |
 
 As descrições dessas ferramentas são parte do sistema, não documentação: é o texto delas que faz o Claude decidir quando acionar a busca e o que incluir numa nota. Mexer ali muda o comportamento.
 
@@ -164,16 +165,18 @@ Baseline em 2026-08-12:
 | Recall@1 | 87% | nota certa em primeiro |
 | Recall@5 | **100%** | o trecho certo sempre chega ao contexto do LLM |
 | MRR | 0,933 | premia ranquear melhor, não só encontrar |
-| Separação | **−0,091** | ⚠️ ver abaixo |
+| Separação | **−0,111** | ⚠️ ver abaixo — e piorando |
 
 **Limitação conhecida e importante:** a pontuação de similaridade é **ordinal, não probabilidade**. Ela ordena os resultados entre si; não mede relevância absoluta. Um exemplo real:
 
 ```
-"como TROCAR o óleo do câmbio"  → 0,468   (casou com "## Por que TROCAMOS")
+"como TROCAR o óleo do câmbio"  → 0,488   (casou com "## Por que TROCAMOS")
 "o que ficou pendente pra Ana?" → 0,377   (acerto legítimo)
 ```
 
-Esse número **piora conforme o vault cresce**: acrescentar documentação falando em "trocar" empurrou o falso positivo de 0,433 para 0,468 numa única sessão. Rodar `npm run eval` periodicamente, e não só ao mexer no código, é o que revela esse tipo de degradação silenciosa.
+Esse número **piora conforme o vault cresce** — medido três vezes num único dia, enquanto esta documentação era escrita: 0,433 → 0,468 → 0,488 no ruído, com o acerto mais fraco parado em 0,377. Cada texto novo contendo "trocar" fortaleceu o falso positivo.
+
+Rodar `npm run eval` periodicamente, e não só ao mexer no código, é o que revela esse tipo de degradação silenciosa. É também o argumento mais forte a favor da busca híbrida: enquanto a similaridade for o único sinal, o problema tende a piorar com o crescimento, não a estabilizar.
 
 Nenhum limiar numérico separa os dois. Por isso quem julga relevância é o Claude, lendo o conteúdo: a descrição da ferramenta instrui a dizer "não encontrei registro" em vez de responder a partir de coincidência de palavras, e a saída avisa quando nem o melhor resultado é forte. O conserto estrutural seria busca híbrida (semântica + palavra exata), ainda no backlog.
 
@@ -284,19 +287,27 @@ Cada projeto tem sua própria gaveta, chamada de **vault**. Isso não é frescur
 
 ## Adicionando um projeto novo
 
-Duas situações:
+**Você nem precisa sair do projeto.** Estando dentro dele, no Claude Code, basta dizer:
 
-**Seu projeto já tem documentação escrita?** Aponte para a pasta dela. Nada é copiado — os arquivos continuam onde estão, você continua editando como sempre, e a ferramenta lê de lá.
+> **"adiciona esse projeto ao meu segundo cérebro"**
 
-**Seu projeto não tem nada escrito?** Crie uma pasta dentro de `notes/` e comece a anotar por conversa.
+Ele cria a gaveta, registra a pasta de documentação e já indexa. Uma pasta pessoal de anotações é criada junto — é lá que suas notas vão parar, nunca dentro do repositório do projeto.
 
-Nos dois casos você edita o arquivo `vaults.json` (o exemplo está na Parte 1) e roda:
+⚠️ **Aponte para a pasta de documentação, não para a raiz do projeto.** Testei apontando para a raiz de um projeto Next.js e a busca passou a devolver o `README.md` gerado automaticamente pelo `create-next-app`. Prefira `<projeto>/docs` quando existir.
 
-```bash
-npm run ingest
-```
+Se o projeto for grande (mais de 30 arquivos), ele registra e pede para você rodar `npm run ingest` — indexar centenas de arquivos leva minutos e travaria a conversa. Projeto de umas 100 páginas de documentação leva algo como meia hora. **Só a primeira vez.** Depois, mudanças custam menos de um segundo.
 
-Da primeira vez pode demorar — ela precisa "ler" tudo. Projeto grande, de umas 100 páginas de documentação, leva algo como meia hora. **Só a primeira vez.** Depois, mudanças custam menos de um segundo.
+**Projeto sem nenhuma documentação?** Adicione do mesmo jeito e comece a anotar por conversa; a pasta pessoal já estará criada.
+
+## Usando com o Obsidian
+
+As pastas de `notes/` são vaults do Obsidian — é só abrir, sem converter nada. Os arquivos usam `[[links entre notas]]`, então o **grafo já aparece montado**.
+
+Combina bem: você edita no Obsidian, salva, e a próxima pergunta já considera a mudança. Obsidian vira o editor confortável; o Claude Code vira a busca.
+
+Uma ressalva: abrir a pasta `notes/` inteira mostra todos os projetos num grafo só. Abrir só `notes/<projeto>/` isola um projeto, mas perde a visão geral. Escolha conforme o que quiser enxergar.
+
+> Hoje os links servem para **você navegar**, não para a busca — ela compara significado, e um `[[link]]` é só texto para ela. Fazer a busca seguir os links é uma melhoria já anotada no backlog.
 
 ## Uma rotina que funciona
 
