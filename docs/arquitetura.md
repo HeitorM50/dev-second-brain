@@ -33,7 +33,7 @@ flowchart LR
         A3["Fontes extensas<br/>docs, PRs, chats"]
     end
 
-    V[("📁 notes/<br/><b>FONTE DA VERDADE</b><br/>arquivos .md")]
+    V[("📁 pastas declaradas<br/>em vaults.json<br/><b>FONTE DA VERDADE</b>")]
 
     subgraph INDEXACAO["⚙️ INDEXAÇÃO — roda de vez em quando"]
         B1["1 Ingerir"] --> B2["2 Fatiar"] --> B3["3 Embeddar"] --> B4["4 Indexar"]
@@ -61,7 +61,7 @@ flowchart LR
 
 **O que ler nesse desenho:**
 
-- O **MVP é só o miolo**: `notes/` → indexação → consulta. As caixas tracejadas da
+- O **MVP é só o miolo**: notas → indexação → consulta. As caixas tracejadas da
   esquerda são a "outra metade" do sistema (seção 6), que fica para depois.
 - **Indexação e consulta são dois programas diferentes**, que rodam em momentos
   diferentes. Isso não é detalhe — é o conceito que faz o RAG ser viável. Veja a seguir.
@@ -77,30 +77,30 @@ da pergunta. **Não lê.** O trabalho pesado acontece antes, uma vez só.
 sequenceDiagram
     autonumber
     participant Você
-    participant CLI as Script CLI
+    participant App as CLI / servidor MCP
     participant Ollama as Ollama<br/>(local:11434)
     participant Idx as Índice vetorial
     participant LLM as LLM (Claude)
 
     rect rgba(120, 180, 90, 0.15)
-    Note over Você,Idx: ⚙️ MOMENTO 1 — Indexação (lento, roda quando as notas mudam)
-    Você->>CLI: npm run ingest
-    CLI->>CLI: lê os .md e fatia em chunks
+    Note over Você,Idx: ⚙️ MOMENTO 1 — Indexação (lenta; automática quando as notas mudam)
+    Você->>App: npm run ingest
+    App->>App: lê os .md e fatia em chunks
     loop para cada chunk
-        CLI->>Ollama: texto do chunk
-        Ollama-->>CLI: vetor de 1024 números
+        App->>Ollama: texto do chunk
+        Ollama-->>App: vetor de 1024 números
     end
-    CLI->>Idx: salva os vetores + o texto de origem
+    App->>Idx: salva os vetores + o texto de origem
     end
 
     rect rgba(90, 150, 210, 0.15)
     Note over Você,LLM: 💬 MOMENTO 2 — Consulta (rápido, roda a cada pergunta)
-    Você->>CLI: "o que decidimos sobre o banco?"
-    CLI->>Ollama: embeddar a PERGUNTA
-    Ollama-->>CLI: vetor da pergunta
-    CLI->>Idx: quais vetores estão mais perto deste?
-    Idx-->>CLI: os 3-5 chunks mais próximos
-    CLI->>LLM: esses chunks + a pergunta
+    Você->>App: "o que decidimos sobre o banco?"
+    App->>Ollama: embeddar a PERGUNTA
+    Ollama-->>App: vetor da pergunta
+    App->>Idx: quais vetores estão mais perto deste?
+    Idx-->>App: os 3-5 chunks mais próximos
+    App->>LLM: esses chunks + a pergunta
     LLM-->>Você: resposta citando a nota de origem
     end
 ```
@@ -140,7 +140,7 @@ flowchart TD
 | ✅ | 1. Ingerir | **Concluído** | `src/vaults.ts` resolve as pastas de cada vault e varre `.md` recursivamente |
 | ✅ | 2. Fatiar | **Concluído** | Corta em títulos, funde os menores que 120 caracteres, divide os maiores que 2.000; cada chunk recebe `Fonte: <nota>` |
 | ✅ | 3. Embeddar | **Concluído** | `src/embed.ts` chama o Ollama com **bge-m3** (1024 dimensões), em paralelo e só o que mudou |
-| ✅ | 4. Indexar | **Concluído** | `src/store.ts` salva em `data/vaults/<vault>.json`, implementa `cosineSimilarity` e `search` por varredura linear |
+| ✅ | 4. Indexar | **Concluído** | `src/store.ts` salva em `data/vaults/<vault>.json`; busca híbrida (cosseno + BM25, fusão RRF) por varredura linear |
 | ✅ | 5. Consultar | **Concluído** | `src/mcp-server.ts` expõe a busca ao Claude Code, que redige citando a fonte. `npm run ask` serve para depuração |
 
 ### Módulos hoje
@@ -154,9 +154,10 @@ flowchart TD
 | `src/notes.ts` | Criação de notas a partir de conversa: slug seguro e escrita restrita ao vault |
 | `src/vaults.ts` | **Registro de vaults**: quais pastas alimentam cada projeto; varredura recursiva de `.md` |
 | `src/concurrency.ts` | Pool de trabalhadores para embeddar em paralelo com pressão controlada |
-| `src/store.ts` | **Fronteira de armazenamento**: salvar, carregar, hash, cache de embeddings, similaridade, busca |
+| `src/lexical.ts` | Busca lexical: tokenização, BM25, cobertura de termos e fusão RRF |
+| `src/store.ts` | **Fronteira de armazenamento**: salvar, carregar, hash, caches, similaridade e busca híbrida |
 | `src/ask.ts` | CLI de busca: recebe a pergunta e mostra os trechos mais próximos |
-| `src/mcp-server.ts` | **Servidor MCP**: expõe `list_vaults`, `search_notes` e `save_note` ao Claude Code |
+| `src/mcp-server.ts` | **Servidor MCP**: expõe `list_vaults`, `search_notes`, `save_note` e `add_vault` ao Claude Code |
 
 `store.ts` existe justamente para que trocar JSON por outra coisa no futuro seja
 reescrever um arquivo só — o resto do sistema não sabe onde os dados moram.
@@ -455,14 +456,44 @@ realmente aparecem:
 e 4 controles negativos (assuntos que não existem nos vaults). Rode antes e depois de
 qualquer mudança na busca.
 
-**Baseline em 2026-08-12** (vaults `taskflow` e `dev-second-brain`):
+**Baseline em 2026-08-12** — 19 perguntas com nota esperada + 4 controles negativos,
+nos vaults `taskflow` e `dev-second-brain`:
 
-| Métrica | Valor | O que significa |
+| Métrica | Semântica pura | Híbrida (peso lexical 0,5) |
 |---|---|---|
-| Recall@1 | 87% (13/15) | nota certa em primeiro lugar |
-| Recall@5 | **100%** | o trecho certo sempre chega ao contexto do LLM |
-| MRR | 0,933 | premia ranquear melhor, não só encontrar |
-| **Separação** | **−0,111** ⚠️ | ver abaixo — e piorando |
+| Recall@1 | 89% | 89% |
+| Recall@3 | 100% | 100% |
+| Recall@5 | 100% | 100% |
+| MRR | 0,947 | 0,939 |
+| Separação | +0,001 | **+0,024** |
+
+**Limite da suíte:** Recall@5 é 100% em todas as configurações testadas — não há
+folga para medir melhora. Enquanto isso não mudar, a avaliação serve para detectar
+**regressão**, não para provar ganho. Melhorá-la exige perguntas mais difíceis,
+especialmente consultas por identificador exato (nome de função, código de erro,
+sigla), que é o ponto cego declarado da busca semântica.
+
+### ⚠️ Contaminação do conjunto de teste — um erro real, e como foi descoberto
+
+Durante três medições seguidas a separação piorou (−0,056 → −0,091 → −0,111), e isso
+foi registrado aqui como "degradação monotônica conforme o vault cresce". **Estava
+errado.**
+
+A causa real: as perguntas de controle eram **citadas nesta própria documentação** para
+explicar a limitação da busca. Como o vault `dev-second-brain` indexa `docs/`, os
+assuntos de controle passaram a existir no corpus — e cada vez que a explicação era
+reescrita, ficavam mais encontráveis. Os "controles negativos" tinham deixado de ser
+negativos.
+
+Descoberto ao inspecionar quais termos da pergunta existiam no índice: palavras que
+deveriam ser estranhas ao acervo apareciam em vários documentos, todos escritos por
+nós mesmos ao documentar o problema.
+
+Com controles limpos, a conclusão se inverte: **nunca houve crise de separação.**
+
+> **Regra permanente:** nunca cite o texto dos controles negativos na documentação.
+> Está avisado no `_comment` de `eval/questions.json`. Qualquer corpus que indexe a
+> própria documentação do projeto corre esse risco.
 
 ### O que a avaliação revelou — e corrigiu
 
@@ -555,7 +586,7 @@ fácil morre vazia.
 | | Ideia | O que é | Esforço |
 |---|---|---|---|
 | ✅ | **Conjunto de avaliação** | Feito em 2026-08-12. `eval/questions.json` + `npm run eval`. Baseline e o que ele revelou logo abaixo | — |
-| ⬜ | Busca híbrida | Combinar semântica com palavra exata. A semântica é fraca justamente em identificadores: nomes de função, códigos de erro, siglas, nomes próprios | 🟡 médio |
+| ✅ | **Busca híbrida** | Feita em 2026-08-12. BM25 + cosseno com fusão RRF, peso lexical 0,5 escolhido por varredura contra a suíte. Separação subiu de +0,001 para +0,024; o ranking custou 0,008 de MRR. **A suíte atual não consegue provar ganho de ranking** — a lexical existe pelo ponto cego conhecido (identificadores, códigos, siglas), ainda mal coberto pelas perguntas | — |
 | ✅ | Teto de tamanho de chunk | Evita o vetor-média sem foco e o estouro de contexto | — |
 | ⬜ | Contexto hierárquico completo | Hoje o chunk carrega o nome do arquivo e o título da seção. Incluir o caminho inteiro de títulos (`Decisão banco > Alternativas > MongoDB`) | 🟢 pequeno |
 | ⬜ | **Expansão por grafo (links `[[...]]`)** | Depois de achar os melhores trechos, seguir os wikilinks que eles contêm e trazer também os trechos das notas citadas. Aproveita um sinal que **o autor criou de propósito** ao ligar as notas — informação que nenhum embedding tem. Ex.: a nota da reunião diz "escolhemos Postgres, detalhes em `[[decisao-banco]]`"; hoje a justificativa completa pode ficar de fora | 🟡 médio |
@@ -577,7 +608,9 @@ O critério é **o que destrava as outras coisas**, não o que é mais interessa
 2. ~~Índice em memória + invalidação~~ ✅ — pré-requisito da captura: nota salva precisa ficar buscável no segundo seguinte
 3. ~~`save_note`~~ ✅ — fecha o ciclo: conversa → nota → memória consultável
 4. ~~Conjunto de avaliação~~ ✅ — agora "melhorou?" tem resposta numérica
-5. **Próximos** — contexto hierárquico e peso por recência (pequenos, bom retorno), front-matter, busca híbrida. Cada um deve ser medido com `npm run eval` antes e depois
+5. ~~Busca híbrida~~ ✅
+6. **Próximo — ampliar a suíte de avaliação.** Com Recall@5 em 100% em toda configuração testada, ela só detecta regressão; não mede ganho. Precisa de perguntas mais difíceis, sobretudo consultas por identificador exato
+7. Depois: expansão por grafo, contexto hierárquico, peso por recência, front-matter. Cada um medido com `npm run eval` antes e depois
 
 ## 10. Onde retomar
 

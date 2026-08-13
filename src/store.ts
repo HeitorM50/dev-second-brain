@@ -11,6 +11,15 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import {
+    buildLexicalIndex,
+    lexicalCoverage,
+    reciprocalRankFusion,
+    scoreBM25,
+    tokenize,
+    type LexicalIndex,
+} from "./lexical.js";
+
 export type IndexedChunk = {
     vault: string;
     source: string;
@@ -32,8 +41,17 @@ type IndexFile = {
     chunks: IndexedChunk[];
 };
 
-// Um resultado de busca é um chunk + o quanto ele combina com a pergunta.
-export type SearchHit = IndexedChunk & { score: number };
+// Um resultado de busca é um chunk mais os sinais que o colocaram ali.
+export type SearchHit = IndexedChunk & {
+    /** Pontuação de ordenação. Fusão RRF na busca híbrida; cosseno puro em `search`. */
+    score: number;
+    /** Similaridade de cosseno, de −1 a 1. Ordinal: compara resultados entre si. */
+    cosine: number;
+    /** BM25: quanto os termos da pergunta pesam neste trecho. Sem teto fixo. */
+    bm25: number;
+    /** Fração dos termos da pergunta presentes no trecho, de 0 a 1. Absoluta. */
+    coverage: number;
+};
 
 // Ancorado na localização deste arquivo (src/), não no diretório de trabalho.
 // Sem isso, o servidor MCP iniciado de outra pasta procuraria o índice no lugar errado.
@@ -135,6 +153,46 @@ export function loadChunks(vault?: string): IndexedChunk[] {
     return chunks;
 }
 
+/** Chunks mais o índice lexical correspondente, prontos para busca híbrida. */
+export type Searchable = {
+    chunks: IndexedChunk[];
+    lexical: LexicalIndex;
+};
+
+// O índice BM25 é derivado dos chunks e custa alguns milissegundos para montar.
+// Guardado junto do resto para não ser reconstruído a cada pergunta.
+const searchableCache = new Map<string, { key: string; searchable: Searchable }>();
+
+/**
+ * Prepara um conjunto para busca. A chave de cache combina os vaults envolvidos e a
+ * data de modificação de cada índice, então qualquer reindexação invalida sozinha.
+ */
+export function getSearchable(vault?: string): Searchable {
+    const vaults = vault === undefined ? listVaults() : [vault];
+
+    const key = vaults
+        .map((name) => {
+            const path = indexPath(name);
+            return `${name}:${existsSync(path) ? statSync(path).mtimeMs : 0}`;
+        })
+        .join("|");
+
+    const cacheKey = vault ?? "*";
+    const cached = searchableCache.get(cacheKey);
+    if (cached !== undefined && cached.key === key) {
+        return cached.searchable;
+    }
+
+    const chunks = loadChunks(vault);
+    const searchable: Searchable = {
+        chunks,
+        lexical: buildLexicalIndex(chunks.map((chunk) => chunk.text)),
+    };
+
+    searchableCache.set(cacheKey, { key, searchable });
+    return searchable;
+}
+
 /**
  * Mapa `hash → embedding` dos chunks já calculados naquele vault, para reaproveitar
  * o que não mudou. Devolve vazio se o índice não existe ou foi gerado por OUTRO
@@ -184,17 +242,93 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 }
 
 /**
- * Varredura linear: compara a pergunta com TODOS os chunks, ordena pela
- * pontuação e devolve os k melhores. Simples de propósito — com alguns
- * milhares de chunks isso custa milissegundos.
+ * Busca só por similaridade. Mantida para diagnóstico e comparação — a busca em
+ * produção é `hybridSearch`.
  */
 export function search(queryEmbedding: number[], chunks: IndexedChunk[], k: number): SearchHit[] {
-    const scored: SearchHit[] = chunks.map((chunk) => ({
-        ...chunk,
-        score: cosineSimilarity(queryEmbedding, chunk.embedding),
-    }));
+    const scored: SearchHit[] = chunks.map((chunk) => {
+        const cosine = cosineSimilarity(queryEmbedding, chunk.embedding);
+        return { ...chunk, score: cosine, cosine, bm25: 0, coverage: 0 };
+    });
 
     scored.sort((first, second) => second.score - first.score);
-
     return scored.slice(0, k);
+}
+
+/** Índices de `chunks` ordenados por pontuação decrescente, limitado a `depth`. */
+function rankingOf(scores: number[], depth: number): number[] {
+    return scores
+        .map((score, index) => ({ score, index }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, depth)
+        .map((entry) => entry.index);
+}
+
+/** Quantos candidatos cada ranking contribui para a fusão. */
+const FUSION_DEPTH = 50;
+
+/**
+ * Peso do ranking lexical na fusão, relativo ao semântico (que vale 1).
+ *
+ * Escolhido varrendo valores contra `npm run eval`, não por intuição. Com peso 1
+ * (os dois valendo igual), o BM25 puxava para cima trechos que só compartilhavam
+ * uma palavra comum — "app" casando com "TaskFlow é um app de gerenciamento" — e o
+ * MRR caía de 0,947 para 0,932.
+ *
+ * Em 0,5 o ranking custa quase nada (MRR 0,939) e a margem que separa acerto de
+ * ruído sobe de +0,001 para +0,024. Ficamos com essa troca: uma pergunta caindo uma
+ * posição vale menos que a defesa contra responder com confiança a partir de lixo.
+ *
+ * ⚠️ Ressalva honesta: com a suíte atual, nenhum peso melhora o ranking em relação à
+ * semântica pura. A busca lexical existe pelo ponto cego conhecido (identificadores,
+ * códigos, siglas), que o conjunto de avaliação ainda não cobre bem.
+ */
+const LEXICAL_WEIGHT = Number(process.env["LEXICAL_WEIGHT"] ?? 0.5);
+
+/**
+ * Busca híbrida: combina similaridade semântica com BM25 lexical via Reciprocal
+ * Rank Fusion.
+ *
+ * As duas se complementam por motivos opostos. O embedding acha "como deixar o app
+ * bonito" numa nota sobre Tailwind, sem palavra em comum. O BM25 acha um nome de
+ * função ou código de erro exato, que o embedding dilui. A fusão usa só as posições
+ * de cada ranking, o que dispensa normalizar escalas incomparáveis.
+ */
+export function hybridSearch(
+    queryText: string,
+    queryEmbedding: number[],
+    searchable: Searchable,
+    k: number,
+): SearchHit[] {
+    const { chunks, lexical } = searchable;
+    if (chunks.length === 0) {
+        return [];
+    }
+
+    const queryTokens = tokenize(queryText);
+
+    const cosineScores = chunks.map((chunk) => cosineSimilarity(queryEmbedding, chunk.embedding));
+    const bm25Scores = scoreBM25(lexical, queryTokens);
+
+    const fused = reciprocalRankFusion([
+        { ranking: rankingOf(cosineScores, FUSION_DEPTH), weight: 1 },
+        { ranking: rankingOf(bm25Scores, FUSION_DEPTH), weight: LEXICAL_WEIGHT },
+    ]);
+
+    return [...fused.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, k)
+        .flatMap(([index, score]) => {
+            const chunk = chunks[index];
+            if (chunk === undefined) {
+                return [];
+            }
+            return [{
+                ...chunk,
+                score,
+                cosine: cosineScores[index] ?? 0,
+                bm25: bm25Scores[index] ?? 0,
+                coverage: lexicalCoverage(lexical, queryTokens, index),
+            }];
+        });
 }

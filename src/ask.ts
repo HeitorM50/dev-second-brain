@@ -5,7 +5,7 @@
 //       npm run ask -- --vault taskflow "sua pergunta" (busca em um vault só)
 
 import { embed } from "./embed.js";
-import { listVaults, loadChunks, search } from "./store.js";
+import { getSearchable, hybridSearch, listVaults } from "./store.js";
 
 const HITS_TO_SHOW = 3;
 
@@ -25,7 +25,8 @@ if (question.length === 0) {
     process.exit(1);
 }
 
-const chunks = loadChunks(vault);
+const searchable = getSearchable(vault);
+const chunks = searchable.chunks;
 
 if (chunks.length === 0) {
     console.error(
@@ -37,14 +38,17 @@ if (chunks.length === 0) {
 }
 
 const questionEmbedding = await embed(question);
-const hits = search(questionEmbedding, chunks, HITS_TO_SHOW);
+const hits = hybridSearch(question, questionEmbedding, searchable, HITS_TO_SHOW);
 
 const scope = vault === undefined ? `todos os vaults (${listVaults().join(", ")})` : `vault ${vault}`;
 console.log(`\nPergunta: ${question}`);
 console.log(`Buscando em ${scope} — ${chunks.length} chunks\n`);
 
 for (const hit of hits) {
-    console.log(`[${hit.score.toFixed(3)}] ${hit.vault}/${hit.source}`);
+    console.log(
+        `[sem ${hit.cosine.toFixed(3)} | termos ${(hit.coverage * 100).toFixed(0)}%] `
+        + `${hit.vault}/${hit.source}`,
+    );
     // Pula a primeira linha (o carimbo "Fonte:") e mostra um trecho do conteúdo.
     const preview = hit.text.split("\n").slice(1).join("\n").trim().slice(0, 180);
     console.log(`${preview}\n`);

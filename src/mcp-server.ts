@@ -17,7 +17,7 @@ import { z } from "zod";
 import { embed } from "./embed.js";
 import { buildVaultIndex, isVaultStale } from "./indexer.js";
 import { saveNote } from "./notes.js";
-import { listVaults, loadChunks, search, type SearchHit } from "./store.js";
+import { getSearchable, hybridSearch, listVaults, type SearchHit } from "./store.js";
 import {
     listVaultFiles,
     loadVaultConfig,
@@ -119,7 +119,8 @@ server.registerTool(
     },
     async ({ query, vault, limit }) => {
         await refreshIfStale(vault);
-        const chunks = loadChunks(vault);
+        const searchable = getSearchable(vault);
+        const chunks = searchable.chunks;
 
         if (chunks.length === 0) {
             const available = listVaults();
@@ -147,7 +148,7 @@ server.registerTool(
             };
         }
 
-        const hits = search(queryEmbedding, chunks, limit ?? DEFAULT_LIMIT);
+        const hits = hybridSearch(query, queryEmbedding, searchable, limit ?? DEFAULT_LIMIT);
 
         return { content: [{ type: "text", text: formatHits(query, hits) }] };
     },
@@ -344,26 +345,30 @@ server.registerTool(
 );
 
 /** Formata os resultados como texto legível — é isso que entra no contexto do Claude. */
-function formatHits(query: string, hits: SearchHit[]): string {
-    const topScore = hits[0]?.score ?? 0;
+// Medido em `npm run eval`: o pior acerto legítimo fica em 0,377 e o melhor falso
+// positivo em 0,353 — margem estreitíssima. Por isso este número não CORTA nada,
+// apenas sinaliza; quem decide relevância é a leitura do conteúdo.
+const WEAK_SIMILARITY = 0.40;
 
-    // Aviso explícito quando nem o melhor resultado é forte. Não é um corte — o
-    // conteúdo continua sendo entregue — é um sinal para o julgamento de relevância.
-    const warning = topScore < 0.45
-        ? "\n⚠ Nenhum trecho teve semelhança alta. É provável que o vault não tenha "
-            + "registro sobre isto — confira se os trechos abaixo realmente respondem "
-            + "antes de usá-los.\n"
+function formatHits(query: string, hits: SearchHit[]): string {
+    const topCosine = hits[0]?.cosine ?? 0;
+
+    const warning = topCosine < WEAK_SIMILARITY
+        ? "\n⚠ Nenhum trecho teve semelhança alta. É provável que não exista registro "
+            + "sobre isto — confira se os trechos abaixo realmente respondem antes de "
+            + "usá-los, e prefira dizer que não encontrou a inventar uma resposta.\n"
         : "";
 
     const header = `${hits.length} trechos mais próximos de "${query}"`
-        + " (pontuação ordena entre si; não mede relevância absoluta):\n"
+        + " (busca híbrida: semântica + palavra-chave):\n"
         + warning;
 
     const blocks = hits.map((hit, position) => {
         // O texto guardado começa com a linha "Fonte: <arquivo>", redundante aqui.
         const body = hit.text.split("\n").slice(1).join("\n").trim();
         return `--- [${position + 1}] ${hit.vault}/${hit.source} `
-            + `(similaridade ${hit.score.toFixed(3)}) ---\n${body}`;
+            + `(semelhança ${hit.cosine.toFixed(3)}, `
+            + `termos em comum ${(hit.coverage * 100).toFixed(0)}%) ---\n${body}`;
     });
 
     return [header, ...blocks].join("\n");

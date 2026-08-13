@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { embed } from "./embed.js";
-import { loadChunks, search } from "./store.js";
+import { getSearchable, hybridSearch, search, type SearchHit } from "./store.js";
 
 const TOP_K = 5;
 
@@ -28,9 +28,9 @@ const { questions } = JSON.parse(readFileSync(questionsPath, "utf-8")) as { ques
 const verbose = process.argv.includes("--verbose");
 
 /** Posição (1-based) do primeiro acerto, ou 0 se nenhum dos k resultados serve. */
-function firstHitRank(sources: string[], expected: string[]): number {
-    for (let i = 0; i < sources.length; i++) {
-        const source = sources[i] ?? "";
+function firstHitRank(hits: SearchHit[], expected: string[]): number {
+    for (let i = 0; i < hits.length; i++) {
+        const source = hits[i]?.source ?? "";
         if (expected.some((name) => source === name || source.endsWith(`/${name}`))) {
             return i + 1;
         }
@@ -38,79 +38,120 @@ function firstHitRank(sources: string[], expected: string[]): number {
     return 0;
 }
 
-let positives = 0;
-let recallAt1 = 0;
-let recallAt3 = 0;
-let recallAt5 = 0;
-let reciprocalRankSum = 0;
+type Metrics = {
+    recallAt1: number;
+    recallAt3: number;
+    recallAt5: number;
+    mrr: number;
+    /** Menor valor do sinal entre acertos em 1º lugar. */
+    worstPositive: number;
+    /** Maior valor do sinal entre perguntas sem resposta. */
+    bestNegative: number;
+    misses: string[];
+};
 
-// Para a margem de separação: pior acerto contra melhor falso positivo.
-let worstPositiveScore = Number.POSITIVE_INFINITY;
-let bestNegativeScore = Number.NEGATIVE_INFINITY;
+function emptyMetrics(): Metrics {
+    return {
+        recallAt1: 0, recallAt3: 0, recallAt5: 0, mrr: 0,
+        worstPositive: Number.POSITIVE_INFINITY,
+        bestNegative: Number.NEGATIVE_INFINITY,
+        misses: [],
+    };
+}
 
-const misses: string[] = [];
-
-for (const question of questions) {
-    const chunks = loadChunks(question.vault);
-    const queryEmbedding = await embed(question.query);
-    const hits = search(queryEmbedding, chunks, TOP_K);
-    const sources = hits.map((hit) => hit.source);
-    const topScore = hits[0]?.score ?? 0;
+/** `signal` escolhe qual número usar para medir separação: cosseno ou cobertura. */
+function record(
+    metrics: Metrics,
+    question: Question,
+    hits: SearchHit[],
+    signal: (hit: SearchHit) => number,
+): void {
+    const top = hits[0];
+    const topSignal = top === undefined ? 0 : signal(top);
 
     if (question.expected.length === 0) {
-        // Controle negativo: guardamos a maior pontuação obtida por uma pergunta
-        // que não tem resposta no vault.
-        bestNegativeScore = Math.max(bestNegativeScore, topScore);
-        if (verbose) {
-            console.log(`  ${question.id.padEnd(8)} controle — maior pontuação ${topScore.toFixed(3)}`);
-        }
-        continue;
+        metrics.bestNegative = Math.max(metrics.bestNegative, topSignal);
+        return;
     }
 
-    positives++;
-    const rank = firstHitRank(sources, question.expected);
-
-    if (rank === 1) recallAt1++;
-    if (rank >= 1 && rank <= 3) recallAt3++;
-    if (rank >= 1 && rank <= 5) recallAt5++;
-    reciprocalRankSum += rank === 0 ? 0 : 1 / rank;
+    const rank = firstHitRank(hits, question.expected);
+    if (rank === 1) metrics.recallAt1++;
+    if (rank >= 1 && rank <= 3) metrics.recallAt3++;
+    if (rank >= 1 && rank <= 5) metrics.recallAt5++;
+    metrics.mrr += rank === 0 ? 0 : 1 / rank;
 
     if (rank === 1) {
-        worstPositiveScore = Math.min(worstPositiveScore, topScore);
+        metrics.worstPositive = Math.min(metrics.worstPositive, topSignal);
+    } else if (rank === 0) {
+        metrics.misses.push(
+            `${question.id}: "${question.query}" — esperado ${question.expected.join(" ou ")}, `
+            + `veio ${hits[0]?.source ?? "nada"}`,
+        );
     }
-    if (rank === 0) {
-        misses.push(`${question.id}: "${question.query}" — esperado ${question.expected.join(" ou ")}, veio ${sources[0] ?? "nada"}`);
+}
+
+const semantic = emptyMetrics();
+const hybrid = emptyMetrics();
+const hybridCoverage = emptyMetrics();
+let positives = 0;
+
+for (const question of questions) {
+    const searchable = getSearchable(question.vault);
+    const queryEmbedding = await embed(question.query);
+
+    const semanticHits = search(queryEmbedding, searchable.chunks, TOP_K);
+    const hybridHits = hybridSearch(question.query, queryEmbedding, searchable, TOP_K);
+
+    if (question.expected.length > 0) {
+        positives++;
     }
 
+    record(semantic, question, semanticHits, (hit) => hit.cosine);
+    record(hybrid, question, hybridHits, (hit) => hit.cosine);
+    record(hybridCoverage, question, hybridHits, (hit) => hit.coverage);
+
     if (verbose) {
-        const mark = rank === 0 ? "✗" : rank === 1 ? "✓" : `→${rank}`;
-        console.log(`  ${question.id.padEnd(8)} ${mark.padEnd(3)} ${topScore.toFixed(3)}  ${question.query}`);
+        const mark = (hits: SearchHit[]): string => {
+            if (question.expected.length === 0) return "ctrl";
+            const rank = firstHitRank(hits, question.expected);
+            return rank === 0 ? " ✗ " : rank === 1 ? " ✓ " : `→${rank} `;
+        };
+        console.log(
+            `  ${question.id.padEnd(8)} sem:${mark(semanticHits)} hib:${mark(hybridHits)} `
+            + `cob:${(hybridHits[0]?.coverage ?? 0).toFixed(2)}  ${question.query}`,
+        );
     }
 }
 
 const percent = (value: number): string => `${((value / positives) * 100).toFixed(0)}%`;
-const margin = worstPositiveScore - bestNegativeScore;
+const negatives = questions.length - positives;
 
-console.log(`\n${positives} perguntas com resposta esperada, ${questions.length - positives} controles negativos\n`);
-console.log(`  Recall@1   ${percent(recallAt1).padStart(4)}   (${recallAt1}/${positives}) — nota certa em primeiro`);
-console.log(`  Recall@3   ${percent(recallAt3).padStart(4)}   (${recallAt3}/${positives})`);
-console.log(`  Recall@5   ${percent(recallAt5).padStart(4)}   (${recallAt5}/${positives}) — chegou ao contexto do LLM`);
-console.log(`  MRR        ${(reciprocalRankSum / positives).toFixed(3)}        — 1,0 seria tudo em primeiro`);
-console.log(
-    `\n  Separação  ${margin >= 0 ? "+" : ""}${margin.toFixed(3)}       `
-    + `— pior acerto ${worstPositiveScore.toFixed(3)} vs. melhor falso ${bestNegativeScore.toFixed(3)}`,
-);
+console.log(`\n${positives} perguntas com resposta esperada, ${negatives} controles negativos\n`);
+console.log("                    semântica   híbrida");
+console.log(`  Recall@1          ${percent(semantic.recallAt1).padStart(8)}  ${percent(hybrid.recallAt1).padStart(8)}`);
+console.log(`  Recall@3          ${percent(semantic.recallAt3).padStart(8)}  ${percent(hybrid.recallAt3).padStart(8)}`);
+console.log(`  Recall@5          ${percent(semantic.recallAt5).padStart(8)}  ${percent(hybrid.recallAt5).padStart(8)}`);
+console.log(`  MRR               ${(semantic.mrr / positives).toFixed(3).padStart(8)}  ${(hybrid.mrr / positives).toFixed(3).padStart(8)}`);
 
-if (margin > 0) {
-    const threshold = (worstPositiveScore + bestNegativeScore) / 2;
-    console.log(`             existe limiar que separa os dois grupos (ex.: ${threshold.toFixed(3)})`);
-} else {
-    console.log(`             ⚠ nenhum limiar separa acertos de ruído — a busca não sabe dizer "não sei"`);
+const gap = (m: Metrics): number => m.worstPositive - m.bestNegative;
+
+console.log("\n  Separação — consegue distinguir acerto de ruído?\n");
+for (const [label, metrics] of [
+    ["cosseno (semântica)", semantic],
+    ["cosseno (híbrida)  ", hybrid],
+    ["cobertura lexical  ", hybridCoverage],
+] as const) {
+    const value = gap(metrics);
+    const status = value > 0 ? "✓ separa" : "✗ não separa";
+    console.log(
+        `    ${label}  ${value >= 0 ? "+" : ""}${value.toFixed(3)}  ${status}`
+        + `   (pior acerto ${metrics.worstPositive.toFixed(3)} vs. melhor falso ${metrics.bestNegative.toFixed(3)})`,
+    );
 }
 
-if (misses.length > 0) {
-    console.log(`\n  ${misses.length} pergunta(s) sem acerto no top ${TOP_K}:`);
-    for (const miss of misses) {
+if (hybrid.misses.length > 0) {
+    console.log(`\n  ${hybrid.misses.length} pergunta(s) sem acerto no top ${TOP_K} (híbrida):`);
+    for (const miss of hybrid.misses) {
         console.log(`    - ${miss}`);
     }
 }

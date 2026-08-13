@@ -61,9 +61,10 @@ Dependências de produção: `@modelcontextprotocol/sdk` e `zod`. Só isso.
 | `src/indexer.ts` | Fatia, embedda e grava. **Módulo chamável** — usado pelo CLI e pelo servidor MCP, para que reindexar à mão e automaticamente rodem o mesmo código |
 | `src/embed.ts` | Texto → vetor, via `POST localhost:11434/api/embeddings` |
 | `src/concurrency.ts` | Pool de trabalhadores com limite de chamadas simultâneas |
-| `src/store.ts` | **Fronteira de armazenamento**: gravar, carregar, hash, cache, similaridade de cosseno, busca |
+| `src/lexical.ts` | Busca lexical: tokenização, BM25, cobertura de termos e fusão RRF |
+| `src/store.ts` | **Fronteira de armazenamento**: gravar, carregar, hash, caches, similaridade e busca híbrida |
 | `src/notes.ts` | Criação de notas a partir de conversa: slug seguro e escrita restrita ao vault |
-| `src/mcp-server.ts` | Servidor MCP: expõe as três ferramentas ao Claude Code |
+| `src/mcp-server.ts` | Servidor MCP: expõe as quatro ferramentas ao Claude Code |
 | `src/ingest.ts` | CLI de indexação (casca fina sobre `indexer.ts`) |
 | `src/ask.ts` | CLI de busca, para depuração |
 | `src/eval.ts` | Avaliação da qualidade da busca |
@@ -116,11 +117,13 @@ Cada trecho carrega um **SHA-256 do seu texto**. Ao reindexar, só o que não es
 
 ## Consulta
 
-A busca é **varredura linear**: compara a pergunta com todos os trechos, ordena e devolve os melhores. Sem índice aproximado, sem banco.
+A busca é **híbrida e por varredura linear**: dois rankings sobre todos os trechos — similaridade de cosseno e BM25 lexical — combinados por *Reciprocal Rank Fusion*, que soma `peso / (60 + posição)` de cada lista. A fusão usa só as posições, o que dispensa normalizar escalas incomparáveis (cosseno vai de −1 a 1; BM25 não tem teto). O peso lexical é 0,5, escolhido varrendo valores contra a suíte de avaliação.
+
+Os dois sinais se complementam por motivos opostos: o embedding acha "como deixar o app bonito" numa nota sobre Tailwind, sem palavra em comum; o BM25 acha `bge-m3` ou um código de erro exato, que o embedding dilui.
 
 ```
 carregar o índice do disco (32 MB, 1.543 trechos) ...... 150ms
-calcular cosseno contra todos os trechos ................. 4ms
+calcular os dois rankings e fundir ....................... ~10ms
 ```
 
 O gargalo nunca foi a matemática — era ler o JSON. Por isso o servidor MCP mantém os índices carregados em memória entre chamadas, invalidando pela data de modificação do arquivo. **A partir da segunda pergunta, a busca custa 4ms.**
@@ -136,7 +139,7 @@ Consequência prática: **você edita uma nota no editor e pergunta em seguida �
 | Ferramenta | Assinatura | Comportamento |
 |---|---|---|
 | `list_vaults` | — | Nomes dos vaults indexados |
-| `search_notes` | `query`, `vault?`, `limit?` (padrão 5) | Verifica frescor, embedda a pergunta, devolve os trechos mais próximos com pontuação e origem. Sem `vault`, cruza todos |
+| `search_notes` | `query`, `vault?`, `limit?` (padrão 5) | Verifica frescor, embedda a pergunta e devolve os trechos mais próximos pela busca híbrida, com semelhança, termos em comum e origem. Sem `vault`, cruza todos |
 | `save_note` | `vault`, `title`, `content` | Cria `.md` na pasta `writeTo` do vault e indexa na hora |
 | `add_vault` | `name`, `sources[]`, `exclude?` | Registra um projeto novo: cria `notes/<name>` como pasta privada, grava em `vaults.json` com caminho relativo e indexa na hora se forem até 30 arquivos. Acima disso, orienta a rodar `npm run ingest` — indexar centenas de arquivos travaria a chamada |
 
@@ -162,10 +165,10 @@ Baseline em 2026-08-12:
 
 | Métrica | Valor | Leitura |
 |---|---|---|
-| Recall@1 | 87% | nota certa em primeiro |
+| Recall@1 | 89% | nota certa em primeiro |
 | Recall@5 | **100%** | o trecho certo sempre chega ao contexto do LLM |
-| MRR | 0,933 | premia ranquear melhor, não só encontrar |
-| Separação | **−0,111** | ⚠️ ver abaixo — e piorando |
+| MRR | 0,939 | premia ranquear melhor, não só encontrar |
+| Separação | **+0,024** | margem entre acerto e ruído — pequena, mas positiva |
 
 **Limitação conhecida e importante:** a pontuação de similaridade é **ordinal, não probabilidade**. Ela ordena os resultados entre si; não mede relevância absoluta. Um exemplo real:
 
@@ -285,19 +288,111 @@ Em pastas normais do seu computador, como arquivos de texto que qualquer editor 
 
 Cada projeto tem sua própria gaveta, chamada de **vault**. Isso não é frescura organizacional — se tudo ficasse junto, perguntar *"por que escolhemos Postgres?"* traria a resposta de três projetos misturados, um deles tendo decidido o contrário. A resposta viria confusa ou errada.
 
-## Adicionando um projeto novo
+## Passo a passo, por cenário
 
-**Você nem precisa sair do projeto.** Estando dentro dele, no Claude Code, basta dizer:
+Ache o seu caso e siga a receita.
 
-> **"adiciona esse projeto ao meu segundo cérebro"**
+---
 
-Ele cria a gaveta, registra a pasta de documentação e já indexa. Uma pasta pessoal de anotações é criada junto — é lá que suas notas vão parar, nunca dentro do repositório do projeto.
+### 🅰️ Projeto que JÁ TEM documentação escrita
 
-⚠️ **Aponte para a pasta de documentação, não para a raiz do projeto.** Testei apontando para a raiz de um projeto Next.js e a busca passou a devolver o `README.md` gerado automaticamente pelo `create-next-app`. Prefira `<projeto>/docs` quando existir.
+_Exemplo: um projeto com pasta `docs/`, ADRs, atas de reunião._
 
-Se o projeto for grande (mais de 30 arquivos), ele registra e pede para você rodar `npm run ingest` — indexar centenas de arquivos leva minutos e travaria a conversa. Projeto de umas 100 páginas de documentação leva algo como meia hora. **Só a primeira vez.** Depois, mudanças custam menos de um segundo.
+**Objetivo:** tornar o que já existe consultável, sem mexer em nada.
 
-**Projeto sem nenhuma documentação?** Adicione do mesmo jeito e comece a anotar por conversa; a pasta pessoal já estará criada.
+1. Abra o Claude Code **dentro do projeto**.
+2. Diga: **"adiciona esse projeto ao meu segundo cérebro, a documentação está em `docs/`"**
+3. Se ele avisar que são muitos arquivos, vá até o `dev-second-brain` e rode `npm run ingest`. Pode ir tomar um café — projeto grande leva minutos, e é só a primeira vez.
+4. Pronto. Já pode perguntar: **"o que já foi decidido sobre autenticação aqui?"**
+
+**Importante:** aponte para a pasta de documentação, não para a raiz do projeto. A raiz traz README de biblioteca e arquivos gerados, que sujam a busca.
+
+**A partir daí:** você continua editando a documentação como sempre, no lugar de sempre. A ferramenta acompanha sozinha.
+
+---
+
+### 🅱️ Projeto que NÃO TEM documentação nenhuma
+
+_Exemplo: um projeto antigo que só existe como código._
+
+**Objetivo:** começar a acumular memória a partir de hoje, sem precisar parar para escrever documentação.
+
+1. Abra o Claude Code dentro do projeto.
+2. Diga: **"adiciona esse projeto ao meu segundo cérebro"** — sem pasta de documentação, ele cria só a gaveta de anotações.
+3. Trabalhe normalmente. Quando decidir algo, diga: **"anota que decidi X porque Y"**
+4. Depois de algumas semanas, você terá um histórico que nunca precisou "sentar para escrever".
+
+**Não tente documentar o passado de uma vez.** Anote o que for surgindo. Vinte notas boas acumuladas valem mais que uma tentativa de documentar tudo que morre no terceiro dia.
+
+---
+
+### 🆕 Projeto começando do zero
+
+_Exemplo: você acabou de rodar `git init`._
+
+**Objetivo:** capturar as decisões de fundação, que são as mais caras de esquecer.
+
+1. Crie o projeto normalmente.
+2. Adicione ao segundo cérebro logo no começo: **"adiciona esse projeto"**
+3. **Anote as decisões de base assim que tomá-las** — linguagem, banco, framework, estrutura de pastas. São justamente as que ninguém documenta e as que mais doem quando esquecidas.
+4. Cole o bloco de `CLAUDE.md` que ele te oferece (próximo cenário) para não depender de lembrar.
+
+> As decisões de fundação são as que mais se esquece e as mais caras de reconstruir. Anotar "escolhi X em vez de Y por causa de Z" custa dez segundos no dia e economiza uma tarde daqui a um ano.
+
+---
+
+### 📝 Projeto que você quer ir documentando conforme trabalha
+
+**Objetivo:** parar de precisar lembrar de anotar.
+
+1. Adicione o projeto (cenários acima).
+2. Ao registrar, o Claude te oferece um bloco de texto pronto. **Cole esse bloco no `CLAUDE.md` do projeto.**
+3. É só isso.
+
+A partir daí, dentro daquele projeto, o Claude passa a:
+
+- **registrar decisões sozinho**, sem você pedir;
+- **consultar o que já foi decidido** antes de sugerir mudança estrutural — o que evita ele propor algo que você já descartou por um bom motivo.
+
+Se o projeto ainda não tem `CLAUDE.md`, crie um arquivo com esse nome na raiz e cole o bloco. Ele é lido automaticamente toda vez que o Claude Code abre ali.
+
+---
+
+### 🔀 Projeto de trabalho, com anotação que NÃO pode ir para o repositório
+
+_Exemplo: código de cliente, e você quer anotar "essa arquitetura tem um problema sério" sem que vire commit._
+
+**Isso já é o comportamento padrão** — não precisa fazer nada de especial.
+
+Ao adicionar um projeto, duas coisas separadas são configuradas:
+
+| | Onde fica | O que acontece |
+|---|---|---|
+| Documentação do projeto | no repositório dele | **só é lida**, nunca escrita |
+| Suas anotações | em `notes/<projeto>/`, aqui | é onde tudo que você anota vai parar |
+
+As duas são consultadas juntas nas buscas. Suas anotações particulares nunca tocam o repositório do cliente.
+
+---
+
+### 🔎 Consultar sem lembrar de qual projeto era
+
+Simplesmente **não diga o projeto**:
+
+> **"em quais projetos eu já usei Postgres?"**
+> **"onde eu já resolvi upload de arquivo grande?"**
+
+A busca cruza todos os vaults e cada resposta diz de qual projeto veio. Útil para reaproveitar solução, e para lembrar que você já resolveu esse problema antes.
+
+---
+
+### 🗑️ Parar de acompanhar um projeto
+
+Abra `vaults.json`, apague a entrada dele e salve. Se quiser limpar o índice, apague também `data/vaults/<nome>.json`.
+
+Suas anotações em `notes/<nome>/` **continuam lá** — apagar o vault não apaga nota nenhuma.
+
+---
 
 ## Usando com o Obsidian
 
