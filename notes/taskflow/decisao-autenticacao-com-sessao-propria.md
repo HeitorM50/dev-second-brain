@@ -1,3 +1,10 @@
+---
+data: 2026-08-12
+projeto: taskflow
+tags: [autenticacao, seguranca, decisao]
+status: ativo
+---
+
 # Decisão: autenticação com sessão própria
 
 _Registrado em 2026-08-13._

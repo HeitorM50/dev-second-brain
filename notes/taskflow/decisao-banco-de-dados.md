@@ -1,3 +1,10 @@
+---
+data: 2026-07-10
+projeto: taskflow
+tags: [banco, persistencia, decisao]
+status: ativo
+---
+
 # Decisão: camada de persistência
 
 **Status:** decidido em 2026-07-10 (ver [[reuniao-2026-07-10]]).

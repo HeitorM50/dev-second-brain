@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { embed } from "./embed.js";
+import { isSuperseded } from "./frontmatter.js";
 import { getSearchable, hybridSearch, search, type SearchHit } from "./store.js";
 
 const TOP_K = 5;
@@ -19,6 +20,11 @@ type Question = {
     /** Omitido = busca cruzada em todos os vaults, como o Claude faz quando não sabe o projeto. */
     vault?: string;
     query: string;
+    /** Filtro de data, como o Claude passaria numa pergunta sobre período. */
+    since?: string;
+    until?: string;
+    /** O primeiro resultado deve vir marcado como decisão revista. */
+    expectSuperseded?: boolean;
     /** Notas aceitas como corretas. Vazio = controle negativo: o certo é não achar nada. */
     expected: string[];
 };
@@ -91,6 +97,10 @@ function record(
     }
 }
 
+let supersededChecks = 0;
+let supersededDetected = 0;
+const supersededMisses: string[] = [];
+
 const semantic = emptyMetrics();
 const hybrid = emptyMetrics();
 const hybridCoverage = emptyMetrics();
@@ -104,8 +114,25 @@ for (const question of questions) {
     }
     const queryEmbedding = await embed(question.query);
 
+    const filters = { since: question.since, until: question.until };
     const semanticHits = search(queryEmbedding, searchable.chunks, TOP_K);
-    const hybridHits = hybridSearch(question.query, queryEmbedding, searchable, TOP_K);
+    const hybridHits = hybridSearch(question.query, queryEmbedding, searchable, TOP_K, filters);
+
+    if (question.expectSuperseded === true) {
+        // A nota revista pode legitimamente não vir em 1º — o que importa é que,
+        // aparecendo entre os resultados, ela venha sinalizada.
+        supersededChecks++;
+        const rank = firstHitRank(hybridHits, question.expected);
+        const hit = rank > 0 ? hybridHits[rank - 1] : undefined;
+        if (hit !== undefined && isSuperseded(hit.meta)) {
+            supersededDetected++;
+        } else {
+            supersededMisses.push(
+                `${question.id}: "${question.query}" — `
+                + (rank === 0 ? "nota nem apareceu no top-k" : "apareceu sem a marcação"),
+            );
+        }
+    }
 
     if (question.expected.length > 0) {
         positives++;
@@ -152,6 +179,17 @@ for (const [label, metrics] of [
         `    ${label}  ${value >= 0 ? "+" : ""}${value.toFixed(3)}  ${status}`
         + `   (pior acerto ${metrics.worstPositive.toFixed(3)} vs. melhor falso ${metrics.bestNegative.toFixed(3)})`,
     );
+}
+
+if (supersededChecks > 0) {
+    const ok = supersededDetected === supersededChecks;
+    console.log(
+        `\n  Decisões revistas   ${supersededDetected}/${supersededChecks} sinalizadas  `
+        + `${ok ? "✓" : "✗ o aviso não apareceu"}`,
+    );
+    for (const miss of supersededMisses) {
+        console.log(`    - ${miss}`);
+    }
 }
 
 if (hybrid.misses.length > 0) {

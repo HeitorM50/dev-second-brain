@@ -1,3 +1,10 @@
+---
+data: 2026-07-10
+projeto: taskflow
+tags: [frontend, stack, decisao]
+status: ativo
+---
+
 # Stack de frontend — TaskFlow
 
 ## Escolha

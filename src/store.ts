@@ -11,6 +11,8 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { isSuperseded, withinDateRange, type NoteMeta } from "./frontmatter.js";
+import { buildNoteIndex, extractLinks } from "./links.js";
 import {
     buildLexicalIndex,
     lexicalCoverage,
@@ -23,6 +25,8 @@ import {
 export type IndexedChunk = {
     vault: string;
     source: string;
+    /** Metadados do front-matter da nota de origem. Vazio quando ela não declara. */
+    meta: NoteMeta;
     text: string;
     /** Impressão digital do texto — identifica um chunk inalterado entre execuções. */
     hash: string;
@@ -153,10 +157,14 @@ export function loadChunks(vault?: string): IndexedChunk[] {
     return chunks;
 }
 
-/** Chunks mais o índice lexical correspondente, prontos para busca híbrida. */
+/** Chunks mais as estruturas derivadas usadas na busca. */
 export type Searchable = {
     chunks: IndexedChunk[];
     lexical: LexicalIndex;
+    /** Notas citadas por cada trecho, na mesma ordem de `chunks`. */
+    links: string[][];
+    /** Chave da nota → índices dos trechos que pertencem a ela. */
+    noteIndex: Map<string, number[]>;
 };
 
 // O índice BM25 é derivado dos chunks e custa alguns milissegundos para montar.
@@ -184,9 +192,14 @@ export function getSearchable(vault?: string): Searchable {
     }
 
     const chunks = loadChunks(vault);
+
+    // Links e índice de notas são derivados do texto, então não precisam estar
+    // gravados no arquivo — calcular aqui evita ter que reindexar tudo.
     const searchable: Searchable = {
         chunks,
         lexical: buildLexicalIndex(chunks.map((chunk) => chunk.text)),
+        links: chunks.map((chunk) => extractLinks(chunk.text)),
+        noteIndex: buildNoteIndex(chunks.map((chunk) => chunk.source)),
     };
 
     searchableCache.set(cacheKey, { key, searchable });
@@ -295,6 +308,55 @@ const FUSION_DEPTH = 50;
 const LEXICAL_WEIGHT = Number(process.env["LEXICAL_WEIGHT"] ?? 0);
 
 /**
+ * Bônus somado à similaridade dos trechos citados por link. Ver `src/links.ts`.
+ *
+ * É um **acréscimo ao cosseno**, não um ranking paralelo. A primeira tentativa usou
+ * RRF como nas outras fusões e falhou: com `k = 60`, o vão entre posições vizinhas do
+ * cosseno é ~0,00003, então qualquer peso perceptível fazia o trecho citado pular
+ * centenas de colocações. Pior, as notas irrelevantes citadas na mesma ata subiam
+ * junto com a relevante.
+ *
+ * Somar ao cosseno preserva a granularidade: um trecho citado mas pouco parecido
+ * continua pouco parecido. Ajustável: `GRAPH_BOOST=0.05 npm run eval`.
+ */
+const GRAPH_BOOST = Number(process.env["GRAPH_BOOST"] ?? 0);
+
+/** Quantos dos melhores resultados têm seus links seguidos. */
+const GRAPH_SEED_SIZE = 5;
+
+/**
+ * Desconto aplicado a notas marcadas como revistas (`status: superseded`).
+ *
+ * Não é censura: a nota continua recuperável, porque perguntas históricas ("por que
+ * escolhemos X na época?") têm resposta legítima nela. O desconto só faz a decisão
+ * **vigente** ganhar quando as duas competem — que é o caso de "o que usamos hoje?".
+ * Ajustável: `SUPERSEDED_PENALTY=0.1 npm run eval`.
+ */
+const SUPERSEDED_PENALTY = Number(process.env["SUPERSEDED_PENALTY"] ?? 0);
+
+/**
+ * Índices dos trechos que pertencem a notas **citadas por link** pelos primeiros
+ * colocados. Não é uma segunda busca: é seguir uma referência que o autor escreveu
+ * de propósito.
+ */
+function linkedCandidates(seedIndices: number[], searchable: Searchable): Set<number> {
+    const seen = new Set(seedIndices);
+    const candidates = new Set<number>();
+
+    for (const seed of seedIndices) {
+        for (const link of searchable.links[seed] ?? []) {
+            for (const target of searchable.noteIndex.get(link) ?? []) {
+                if (!seen.has(target)) {
+                    candidates.add(target);
+                }
+            }
+        }
+    }
+
+    return candidates;
+}
+
+/**
  * Busca híbrida: combina similaridade semântica com BM25 lexical via Reciprocal
  * Rank Fusion.
  *
@@ -303,27 +365,65 @@ const LEXICAL_WEIGHT = Number(process.env["LEXICAL_WEIGHT"] ?? 0);
  * função ou código de erro exato, que o embedding dilui. A fusão usa só as posições
  * de cada ranking, o que dispensa normalizar escalas incomparáveis.
  */
+export type SearchFilters = {
+    /** Data mínima (ISO `YYYY-MM-DD`) da nota de origem. */
+    since?: string | undefined;
+    until?: string | undefined;
+};
+
 export function hybridSearch(
     queryText: string,
     queryEmbedding: number[],
     searchable: Searchable,
     k: number,
+    filters: SearchFilters = {},
 ): SearchHit[] {
     const { chunks, lexical } = searchable;
     if (chunks.length === 0) {
         return [];
     }
 
+    // Filtro por data: aplicado ANTES da ordenação, para não desperdiçar as k vagas
+    // com trechos que serão descartados depois.
+    const allowed = (filters.since === undefined && filters.until === undefined)
+        ? null
+        : chunks.map((chunk) => withinDateRange(chunk.meta, filters.since, filters.until));
+
     const queryTokens = tokenize(queryText);
 
-    const cosineScores = chunks.map((chunk) => cosineSimilarity(queryEmbedding, chunk.embedding));
+    const cosineScores = chunks.map((chunk, index) => (
+        allowed !== null && allowed[index] === false
+            ? Number.NEGATIVE_INFINITY
+            : cosineSimilarity(queryEmbedding, chunk.embedding)
+    ));
 
     // Com peso 0 o BM25 não influencia o resultado — não vale varrer o acervo à toa.
     const bm25Scores = LEXICAL_WEIGHT > 0
         ? scoreBM25(lexical, queryTokens)
         : new Array<number>(chunks.length).fill(0);
 
-    const rankings = [{ ranking: rankingOf(cosineScores, FUSION_DEPTH), weight: 1 }];
+    const rankingScores = [...cosineScores];
+
+    // Decisão revista desce na ordenação, sem sumir do acervo.
+    if (SUPERSEDED_PENALTY > 0) {
+        chunks.forEach((chunk, index) => {
+            if (isSuperseded(chunk.meta)) {
+                rankingScores[index] = (rankingScores[index] ?? 0) - SUPERSEDED_PENALTY;
+            }
+        });
+    }
+
+    // Expansão por grafo: soma um bônus ao cosseno dos trechos citados pelos
+    // primeiros colocados, antes de qualquer ordenação.
+    if (GRAPH_BOOST > 0) {
+        const seeds = rankingOf(cosineScores, GRAPH_SEED_SIZE);
+        for (const candidate of linkedCandidates(seeds, searchable)) {
+            rankingScores[candidate] = (rankingScores[candidate] ?? 0) + GRAPH_BOOST;
+        }
+    }
+
+    const rankings = [{ ranking: rankingOf(rankingScores, FUSION_DEPTH), weight: 1 }];
+
     if (LEXICAL_WEIGHT > 0) {
         rankings.push({ ranking: rankingOf(bm25Scores, FUSION_DEPTH), weight: LEXICAL_WEIGHT });
     }
@@ -335,7 +435,7 @@ export function hybridSearch(
         .slice(0, k)
         .flatMap(([index, score]) => {
             const chunk = chunks[index];
-            if (chunk === undefined) {
+            if (chunk === undefined || (allowed !== null && allowed[index] === false)) {
                 return [];
             }
             return [{

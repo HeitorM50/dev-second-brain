@@ -7,6 +7,7 @@
 import { readFileSync, statSync } from "node:fs";
 
 import { mapWithConcurrency } from "./concurrency.js";
+import { parseFrontmatter, type NoteMeta } from "./frontmatter.js";
 import { embed, EMBEDDING_MODEL } from "./embed.js";
 import { hashText, loadEmbeddingCache, loadIndex, saveIndex, type IndexedChunk } from "./store.js";
 import { listVaultFiles, type VaultConfig } from "./vaults.js";
@@ -167,11 +168,13 @@ export async function buildVaultIndex(vault: string, config: VaultConfig): Promi
     const cache = loadEmbeddingCache(vault, EMBEDDING_MODEL);
 
     // 1) Fatiar tudo primeiro, sem embeddar nada.
-    type PendingChunk = { source: string; text: string; hash: string };
+    type PendingChunk = { source: string; meta: NoteMeta; text: string; hash: string };
     const pending: PendingChunk[] = [];
 
     for (const file of files) {
-        const content = readFileSync(file.path, "utf-8");
+        const raw = readFileSync(file.path, "utf-8");
+        // O front-matter sai do texto embeddado: é metadado estruturado, não conteúdo.
+        const { meta, body: content } = parseFrontmatter(raw);
         // Ordem importa: juntar os pequenos primeiro, depois dividir os grandes —
         // o inverso faria a fusão desfazer as divisões recém-criadas.
         const rawChunks = chunkByHeading(content);
@@ -180,7 +183,7 @@ export async function buildVaultIndex(vault: string, config: VaultConfig): Promi
 
         for (const chunk of chunks){
             const text = `Fonte: ${file.label}\n${chunk}`;
-            pending.push({ source: file.label, text, hash: hashText(text) });
+            pending.push({ source: file.label, meta, text, hash: hashText(text) });
         }
     }
 
@@ -215,7 +218,10 @@ export async function buildVaultIndex(vault: string, config: VaultConfig): Promi
     for (const chunk of pending) {
         const embedding = cache.get(chunk.hash);
         if (embedding !== undefined) {
-            chunks.push({ vault, source: chunk.source, text: chunk.text, hash: chunk.hash, embedding });
+            chunks.push({
+                vault, source: chunk.source, meta: chunk.meta,
+                text: chunk.text, hash: chunk.hash, embedding,
+            });
         }
     }
 

@@ -79,7 +79,19 @@ export function saveNote(
 
     const today = new Date().toISOString().slice(0, 10);
     const body = content.trim();
-    const markdown = `# ${title.trim()}\n\n_Registrado em ${today}._\n\n${body}\n`;
+
+    // Front-matter: metadados que a busca semântica não deduz do texto — data para
+    // filtrar por período, status para marcar decisão revista depois.
+    const frontmatter = [
+        "---",
+        `data: ${today}`,
+        `projeto: ${vault}`,
+        "status: ativo",
+        "---",
+        "",
+    ].join("\n");
+
+    const markdown = `${frontmatter}\n# ${title.trim()}\n\n_Registrado em ${today}._\n\n${body}\n`;
 
     mkdirSync(writeDir, { recursive: true });
     writeFileSync(filePath, markdown, "utf-8");

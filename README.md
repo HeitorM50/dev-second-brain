@@ -63,6 +63,7 @@ Dependências de produção: `@modelcontextprotocol/sdk` e `zod`. Só isso.
 | `src/concurrency.ts` | Pool de trabalhadores com limite de chamadas simultâneas |
 | `src/lexical.ts` | Busca lexical (BM25 + fusão RRF) — implementada, hoje desligada por medição |
 | `src/store.ts` | **Fronteira de armazenamento**: gravar, carregar, hash, caches, similaridade e busca |
+| `src/frontmatter.ts` | Metadados das notas: data, status e decisões substituídas |
 | `src/notes.ts` | Criação de notas a partir de conversa: slug seguro e escrita restrita ao vault |
 | `src/mcp-server.ts` | Servidor MCP: expõe as quatro ferramentas ao Claude Code |
 | `src/ingest.ts` | CLI de indexação (casca fina sobre `indexer.ts`) |
@@ -139,8 +140,8 @@ Consequência prática: **você edita uma nota no editor e pergunta em seguida �
 | Ferramenta | Assinatura | Comportamento |
 |---|---|---|
 | `list_vaults` | — | Nomes dos vaults indexados |
-| `search_notes` | `query`, `vault?`, `limit?` (padrão 5) | Verifica frescor, embedda a pergunta e devolve os trechos mais próximos, com semelhança, termos em comum e origem. Sem `vault`, cruza todos |
-| `save_note` | `vault`, `title`, `content` | Cria `.md` na pasta `writeTo` do vault e indexa na hora |
+| `search_notes` | `query`, `vault?`, `limit?`, `since?`, `until?` | Verifica frescor, embedda a pergunta e devolve os trechos mais próximos, com semelhança, termos em comum e origem. Sem `vault`, cruza todos |
+| `save_note` | `vault`, `title`, `content` | Cria `.md` na pasta `writeTo` do vault, com front-matter, e indexa na hora |
 | `add_vault` | `name`, `sources[]`, `exclude?` | Registra um projeto novo: cria `notes/<name>` como pasta privada, grava em `vaults.json` com caminho relativo e indexa na hora se forem até 30 arquivos. Acima disso, orienta a rodar `npm run ingest` — indexar centenas de arquivos travaria a chamada |
 
 As descrições dessas ferramentas são parte do sistema, não documentação: é o texto delas que faz o Claude decidir quando acionar a busca e o que incluir numa nota. Mexer ali muda o comportamento.
@@ -159,7 +160,7 @@ O título vem do modelo e vira nome de arquivo, então é sanitizado: `NFD` + re
 
 ## Qualidade da busca — medida, não estimada
 
-`npm run eval` roda `eval/questions.json`: **36 perguntas** com nota correta esperada e **6 controles negativos**, cobrindo os três vaults — inclusive um com 1.543 trechos.
+`npm run eval` roda `eval/questions.json`: **39 perguntas** com nota correta esperada e **6 controles negativos**, cobrindo os três vaults — inclusive um com 1.543 trechos.
 
 Baseline em 2026-08-13:
 
@@ -167,9 +168,10 @@ Baseline em 2026-08-13:
 |---|---|---|
 | Recall@1 | 72% | nota certa em primeiro |
 | Recall@3 | 92% | |
-| Recall@5 | **97%** | 35 de 36 — o trecho certo chega ao contexto do LLM |
-| MRR | 0,819 | |
-| Separação | −0,027 | ⚠️ ver abaixo |
+| Recall@5 | **97%** | o trecho certo chega ao contexto do LLM |
+| MRR | 0,821 | |
+| Decisões revistas | 1/1 | notas superadas saem sinalizadas |
+| Separação | −0,021 | ⚠️ ver abaixo |
 
 A suíte cobre paráfrase sem palavra em comum, termo exato (identificadores e siglas), resposta em nota citada por link, busca cruzada sem vault declarado e controles negativos.
 
@@ -200,6 +202,33 @@ A similaridade **ordena resultados entre si; não mede relevância absoluta**. N
 | todos os vaults (1.618) | **0,404** |
 
 O pior acerto legítimo fica em 0,377 — ou seja, **nenhum corte numérico separa os dois grupos**, e a busca cruzada é o pior caso. Por isso quem julga relevância é o Claude, lendo o conteúdo: a descrição da ferramenta instrui a dizer "não encontrei registro" em vez de responder por coincidência de palavras, e a saída avisa quando nem o melhor resultado é forte.
+
+## Front-matter: o que a busca semântica não deduz
+
+Notas podem declarar metadados num bloco no topo. O `save_note` gera automaticamente; notas sem o bloco continuam funcionando.
+
+```yaml
+---
+data: 2026-08-13
+projeto: taskflow
+tags: [banco, decisao]
+status: ativo          # ou: superseded
+superseded_by: nome-da-nota-nova
+---
+```
+
+O bloco é **removido antes do embedding** — é metadado estruturado, não conteúdo.
+
+**Filtro por data.** _"O que decidimos em julho?"_ é pergunta de data, não de significado: nenhum embedding responde isso de forma confiável. Os parâmetros `since` e `until` de `search_notes` recortam por `data` antes de ordenar. Notas **sem data declarada nunca são filtradas** — descartá-las faria um recorte de período esconder silenciosamente todo o acervo antigo.
+
+**Decisões revistas.** Uma nota com `status: superseded` continua sendo recuperável — perguntas históricas ("por que escolhemos X na época?") têm resposta legítima nela — mas o resultado sai com alerta:
+
+```
+⚠️ DECISÃO REVISTA — esta nota foi substituída por "decisao-modelo-embedding".
+Não a apresente como decisão vigente.
+```
+
+Sem isso, uma decisão revogada seria apresentada como se ainda valesse — a falha mais perigosa numa ferramenta de memória.
 
 ## Configuração de vaults
 

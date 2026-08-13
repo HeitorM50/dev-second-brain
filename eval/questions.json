@@ -301,6 +301,33 @@
       ]
     },
     {
+      "id": "fm-01",
+      "vault": "taskflow",
+      "query": "o que foi decidido em agosto?",
+      "since": "2026-08-01",
+      "expected": [
+        "decisao-autenticacao-com-sessao-propria.md"
+      ]
+    },
+    {
+      "id": "fm-02",
+      "vault": "dev-second-brain",
+      "query": "qual modelo de embedding esta em uso hoje?",
+      "expected": [
+        "decisao-modelo-embedding.md",
+        "arquitetura.md"
+      ]
+    },
+    {
+      "id": "fm-03",
+      "vault": "dev-second-brain",
+      "query": "por que escolhemos o nomic-embed-text?",
+      "expectSuperseded": true,
+      "expected": [
+        "decisao-embeddings-locais-ollama.md"
+      ]
+    },
+    {
       "id": "neg-01",
       "vault": "taskflow",
       "query": "quantos litros de tinta para pintar uma parede de doze metros",

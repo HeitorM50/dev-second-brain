@@ -23,22 +23,22 @@ flowchart LR
         E3["Vaults por projeto<br/>+ registro conversacional"]
         E4["Captura por conversa<br/>save_note"]
         E5["Indexação incremental<br/>+ frescor automático"]
-        E6["Suíte de avaliação<br/>36 perguntas, 3 vaults"]
+        E6["Suíte de avaliação<br/>39 perguntas, 3 vaults"]
+        E7["Recuperação em<br/>Recall@5 de 97%"]
+        E8["Front-matter:<br/>filtro por data e<br/>decisões revistas"]
     end
 
-    AGORA["🎯 <b>AGORA</b><br/>Expansão por grafo<br/>seguir links [[...]]"]
+    AGORA["🎯 <b>AGORA</b><br/>Captura de<br/>fim de sessão"]
 
     subgraph PROXIMOS["⏭️ PRÓXIMOS — qualidade e confiança"]
         direction TB
         P2["Contexto hierárquico<br/>no chunk"]
-        P3["Front-matter<br/>+ decisões substituídas"]
         P4["Peso por recência"]
     end
 
     subgraph DEPOIS["🔭 DEPOIS — alcance e captura"]
         direction TB
         D1["Vault automático<br/>pelo diretório"]
-        D2["Captura de<br/>fim de sessão"]
         D3["Ingestão de<br/>fontes extensas"]
         D4["FASE 2<br/>aplicativo local"]
     end
@@ -50,33 +50,37 @@ flowchart LR
     classDef proximo fill:#1a3a52,stroke:#4a9eda,color:#fff
     classDef depois fill:#3d2a52,stroke:#a06fd6,color:#fff
 
-    class E1,E2,E3,E4,E5,E6 feito
+    class E1,E2,E3,E4,E5,E6,E7,E8 feito
     class AGORA agora
-    class P2,P3,P4 proximo
-    class D1,D2,D3,D4 depois
+    class P2,P4 proximo
+    class D1,D3,D4 depois
 ```
 
 ### 🎯 O procedimento a executar agora
 
-**Expansão por grafo** — fazer a busca seguir os links `[[...]]` entre notas.
+**Captura de fim de sessão** — fechar a última lacuna da frente que ainda limita a
+ferramenta de verdade.
 
-Por que este e não outro: a suíte de avaliação **já contém os testes que medem essa
-melhoria**, escritos de propósito antes de ela existir. As perguntas `tf-12` e `tf-13`
-têm a resposta numa nota **citada por link**, não na mais parecida — e hoje ambas saem
-em 2º e 3º lugar. Se a expansão funcionar, elas sobem para 1º; se não funcionar, o
-número dirá.
+Por que esta e não outra: das seis frentes, **captura é a única ainda parcial** que
+depende de comportamento, não de infraestrutura. O `save_note` funciona, mas exige que
+alguém lembre de pedir. Na prática, decisões são tomadas no meio do trabalho e o
+registro fica para depois — que nunca chega.
 
-Como funciona a ideia: depois de recuperar os melhores trechos, ler os `[[links]]` que
-eles contêm e trazer também os trechos das notas citadas. Aproveita um sinal que **o
-autor criou de propósito** ao ligar as notas — informação que nenhum embedding tem.
+A ideia: ao terminar um trabalho, o Claude resume as decisões tomadas na conversa e
+oferece registrá-las. Transforma conversa em memória **sem depender de disciplina**.
 
 O que fazer, em ordem:
 
-1. Registrar, na indexação, quais notas cada chunk cita (extrair `[[...]]` do texto).
-2. Na busca, após o top-k por similaridade, puxar os trechos das notas citadas e
-   reordenar dando a elas uma posição própria na fusão.
-3. `npm run eval` **antes e depois**, olhando especificamente `tf-12` e `tf-13`.
-4. Se Recall@5 cair, reverter — profundidade vale mais que topo (ver seção 8).
+1. Definir o gatilho. Provavelmente instrução no `CLAUDE.md` do projeto, como o bloco
+   que o `add_vault` já sugere — não uma ferramenta nova.
+2. Refinar o critério do que merece nota: decisão com justificativa, não mudança de
+   código. Nota demais afoga a busca tanto quanto nota de menos.
+3. Testar em uso real por alguns dias e ver quantas notas de valor surgem.
+
+**Como medir:** esta é a primeira melhoria da série que a suíte de avaliação **não
+consegue avaliar** — ela mede recuperação, não captura. A métrica aqui é o crescimento
+do vault com notas que você releria. Vale reconhecer isso em vez de fingir que o número
+existe.
 
 > **Regra ao escrever perguntas novas:** nunca cite o texto dos controles negativos na
 > documentação. O vault `dev-second-brain` indexa `docs/`, e isso já contaminou a suíte
@@ -87,10 +91,10 @@ O que fazer, em ordem:
 | Frente | Estado | Detalhe |
 |---|---|---|
 | 🔓 **Alcance** | ✅ resolvido | MCP global; vaults apontam para qualquer pasta; `add_vault` por conversa |
-| ✍️ **Captura** | 🟡 parcial | `save_note` funciona. Faltam captura de fim de sessão e ingestão de fontes extensas |
+| ✍️ **Captura** | 🟡 parcial | `save_note` funciona e já gera front-matter, mas exige que alguém lembre de pedir. Faltam captura de fim de sessão e ingestão de fontes extensas |
 | 🔄 **Frescor** | ✅ resolvido | Índice em memória + reindexação automática por data de modificação |
-| 🎯 **Qualidade** | 🟡 parcial | Suíte com 36 perguntas mede de verdade (Recall@5 97%). Busca híbrida foi construída, medida e **desligada** — piorava a profundidade |
-| 🧭 **Confiança** | 🔴 aberto | Sem front-matter, sem marcação de decisão substituída, sem peso por recência |
+| 🎯 **Qualidade** | ✅ perto do teto | Recall@5 97%; a única falha é uma pergunta de contagem. Busca lexical e expansão por grafo foram construídas, medidas e **desligadas** — nenhuma melhorou |
+| 🧭 **Confiança** | ✅ resolvido | Front-matter com data e status; filtro `since`/`until`; decisões revistas saem com alerta nomeando a substituta |
 | 🖥️ **Interface** | ⬜ adiada | Fase 2 virou opcional: o Claude Code já é a interface |
 
 ### O que NÃO fazer agora
@@ -100,8 +104,13 @@ O que fazer, em ordem:
 - **Trocar o armazenamento.** JSON aguenta muito além do volume atual; os gatilhos de
   migração estão na seção 7.
 - **Reranking.** Complexidade alta para ganho marginal neste volume.
-- **Reativar a busca lexical sem medir.** Foi desligada com dado (seção 8); religar é
-  `LEXICAL_WEIGHT=0.3 npm run eval` e comparar, não editar o padrão por intuição.
+- **Reativar busca lexical ou expansão por grafo sem medir.** Ambas foram desligadas com
+  dado (seção 8). Religar é `LEXICAL_WEIGHT=0.3` ou `GRAPH_BOOST=0.05` + `npm run eval`
+  e comparar — não editar o padrão por intuição.
+- **Mais ajuste fino na recuperação.** Recall@5 está em 97% e duas tentativas seguidas
+  falharam. O retorno está na captura, não na busca.
+- **Peso por recência.** A ordenação natural já coloca a decisão vigente acima da revista
+  sem ajuda (seção 8), e a penalidade testada só piorou. Sem problema medido, sem solução.
 - **Captura a partir do git.** Commit não é decisão; geraria ruído que afoga as notas boas.
 
 ---
@@ -252,7 +261,9 @@ flowchart TD
 | `src/notes.ts` | Criação de notas a partir de conversa: slug seguro e escrita restrita ao vault |
 | `src/vaults.ts` | **Registro de vaults**: quais pastas alimentam cada projeto; varredura recursiva de `.md` |
 | `src/concurrency.ts` | Pool de trabalhadores para embeddar em paralelo com pressão controlada |
-| `src/lexical.ts` | Busca lexical: tokenização, BM25, cobertura de termos e fusão RRF |
+| `src/lexical.ts` | Busca lexical (BM25 + RRF) — implementada, desligada por medição |
+| `src/links.ts` | Expansão por grafo (links entre notas) — implementada, desligada por medição |
+| `src/frontmatter.ts` | Metadados das notas: data, status, decisões substituídas |
 | `src/store.ts` | **Fronteira de armazenamento**: salvar, carregar, hash, caches, similaridade e busca híbrida |
 | `src/ask.ts` | CLI de busca: recebe a pergunta e mostra os trechos mais próximos |
 | `src/mcp-server.ts` | **Servidor MCP**: expõe `list_vaults`, `search_notes`, `save_note` e `add_vault` ao Claude Code |
@@ -606,6 +617,87 @@ acervos (identificadores de código, códigos de erro em log). Ligar e medir é
 > **Lição de método:** com 19 perguntas a híbrida parecia melhor; com 36 e um corpus
 > realista, é pior. Conjunto de teste pequeno não mede — decora.
 
+### 🔬 Expansão por grafo: implementada, medida e **desligada**
+
+Seguir os links `[[...]]` entre notas parecia a melhoria mais promissora do catálogo —
+aproveita um sinal que o autor criou de propósito, que nenhum embedding tem. **Três
+mecanismos foram testados e nenhum melhorou métrica alguma.**
+
+| Tentativa | Resultado |
+|---|---|
+| Ranking paralelo via RRF | R@1 72% → 56%, MRR 0,819 → 0,681 |
+| Bônus aditivo ao cosseno, wikilinks | neutro até 0,04; prejudicial a partir de 0,08 |
+| Bônus aditivo, incluindo links markdown | neutro até 0,02; R@5 cai para 94% em 0,05 |
+
+**Por que o RRF falhou:** com `k = 60`, a diferença entre posições vizinhas do cosseno
+é ~0,00003. Um trecho vindo do grafo com peso 0,2 recebe ~0,0033 — **cem vezes o vão
+entre colocações**, então ele pula centenas de posições. Pesos de 0,2 a 1,0 davam
+resultados idênticos, sinal de dominância total. O RRF pressupõe rankings de qualidade
+comparável; uma listinha de candidatos citados não é isso.
+
+**Por que a ideia não pagou aqui, mesmo com o mecanismo certo:** as perguntas escritas
+para medi-la (`tf-12`, `tf-13`) têm a nota correta em 2º e 3º lugar — ou seja, **já
+dentro das sementes** cujos links são seguidos. A expansão só pode trazer notas de
+**fora** do top-k, então não tinha como promovê-las.
+
+A conclusão é sobre escala: **expansão por grafo é técnica para acervos grandes e
+densamente ligados.** O único vault com wikilinks tem 15 trechos — nele tudo que é
+relevante já cabe no top-5. O vault grande usa links markdown, e mesmo incluindo-os o
+ganho não apareceu.
+
+Código mantido em `src/links.ts`, desligado por padrão. Religar e medir:
+`GRAPH_BOOST=0.05 npm run eval`. Revisitar se algum vault passar a ter muitas notas
+curtas e fortemente interligadas.
+
+> **Duas melhorias seguidas rejeitadas pela medição** — busca lexical e expansão por
+> grafo. Antes da suíte existir, ambas teriam sido entregues como "melhorias", com
+> texto convincente e nenhum número. É exatamente para isso que ela serve.
+
+### ✅ Front-matter e decisões substituídas _(2026-08-13)_
+
+Primeira melhoria desta série que a medição **aprovou**.
+
+As notas podem declarar metadados que a busca semântica não deduz do texto:
+
+```yaml
+---
+data: 2026-08-13
+projeto: taskflow
+tags: [banco, decisao]
+status: ativo | superseded
+superseded_by: nome-da-nota-nova
+---
+```
+
+O bloco é **removido antes do embedding** — é metadado estruturado, não conteúdo. O
+`save_note` passa a gerá-lo automaticamente; notas sem front-matter continuam
+funcionando sem migração.
+
+**O que isso habilita, e que antes era impossível:**
+
+| Recurso | Como funciona | Resultado medido |
+|---|---|---|
+| Filtro por data | `search_notes(since, until)` recorta por `data` antes de ordenar | `fm-01` foi de 2º para **1º** |
+| Aviso de decisão revista | trecho de nota `superseded` sai com alerta nomeando a substituta | **1/1** sinalizada |
+
+O ganho de Recall@1 (69% → 72%) é **exatamente** o filtro de data funcionando: a coluna
+"semântica" da avaliação não aplica filtros e continua errando `fm-01`.
+
+Por que o filtro era necessário: _"o que decidimos em julho?"_ é pergunta de **data**,
+não de significado. Nenhum embedding responde isso de forma confiável, porque a
+proximidade semântica entre "julho" e uma nota de julho é acidental.
+
+**Detalhe de desenho:** notas **sem data declarada nunca são filtradas**. Descartá-las
+faria um recorte de período esconder silenciosamente todo o acervo antigo — que é a
+maior parte dele.
+
+**Penalidade para decisões revistas: testada e descartada.** A hipótese era que a nota
+antiga competiria com a nova em perguntas do tipo "o que usamos hoje?". A medição
+mostrou que a ordenação natural **já resolve** — a decisão vigente pontua acima da
+revista (0,683 contra 0,662) sem ajuda nenhuma. Qualquer penalidade só piorava o MRR, e
+a partir de 0,2 chegava a expulsar a nota revista do top-k, quebrando perguntas
+históricas legítimas. Código mantido em `SUPERSEDED_PENALTY`, padrão 0.
+
 ### 📉 Separação: o efeito real do tamanho do acervo
 
 Com controles limpos, medindo por vault e cruzado:
@@ -738,15 +830,15 @@ fácil morre vazia.
 | 🔬 | **Busca híbrida** | Construída em 2026-08-12 (BM25 + RRF) e **desligada em 2026-08-13 por medição**: piora Recall@5 de 97% para 94%, e as perguntas por termo exato passam sem ela. Código mantido; ligar é `LEXICAL_WEIGHT=0.3`. Ver seção 8 | — |
 | ✅ | Teto de tamanho de chunk | Evita o vetor-média sem foco e o estouro de contexto | — |
 | ⬜ | Contexto hierárquico completo | Hoje o chunk carrega o nome do arquivo e o título da seção. Incluir o caminho inteiro de títulos (`Decisão banco > Alternativas > MongoDB`) | 🟢 pequeno |
-| ⬜ | **Expansão por grafo (links `[[...]]`)** | Depois de achar os melhores trechos, seguir os wikilinks que eles contêm e trazer também os trechos das notas citadas. Aproveita um sinal que **o autor criou de propósito** ao ligar as notas — informação que nenhum embedding tem. Ex.: a nota da reunião diz "escolhemos Postgres, detalhes em `[[decisao-banco]]`"; hoje a justificativa completa pode ficar de fora | 🟡 médio |
+| 🔬 | **Expansão por grafo (links `[[...]]`)** | Depois de achar os melhores trechos, seguir os wikilinks que eles contêm e trazer também os trechos das notas citadas. Aproveita um sinal que **o autor criou de propósito** ao ligar as notas — informação que nenhum embedding tem. **Construída e desligada em 2026-08-13**: três mecanismos testados, nenhum melhorou as métricas. É técnica para acervos grandes e densamente ligados; os vaults atuais não são. Ver seção 8 | — |
 | ⬜ | Reranking | Recuperar 20 e reordenar com modelo mais caro antes de entregar 5. _Complexidade alta para ganho marginal no volume atual_ | 🟠 grande |
 
 ### 🧭 Confiança — saber se dá para acreditar
 
 | | Ideia | O que é | Esforço |
 |---|---|---|---|
-| ⬜ | Front-matter nas notas | Data, projeto, tags, status → habilita filtros que a busca semântica não sabe fazer (_"o que decidimos em julho?"_ é pergunta de data, não de significado) | 🟡 médio |
-| ⬜ | Decisões substituídas | Marcar quando uma decisão foi revista, e a busca avisar _"superado por [[outra-nota]]"_. Já há um caso real no vault: o `nomic-embed-text` | 🟡 médio |
+| ✅ | **Front-matter nas notas** | Feito em 2026-08-13. Data, projeto, tags e status; removido do texto antes do embedding e gerado pelo `save_note`. Habilitou `since`/`until` em `search_notes` — Recall@1 de 69% para 72% | — |
+| ✅ | **Decisões substituídas** | Feito em 2026-08-13. `status: superseded` + `superseded_by`; a busca devolve alerta nomeando a substituta. O caso real do `nomic-embed-text` está registrado como nota própria | — |
 | ⬜ | Peso por recência | Uma decisão de ontem vale mais que uma de dois anos atrás, mesmo combinando pior com as palavras | 🟢 pequeno |
 
 ### Ordem recomendada

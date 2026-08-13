@@ -16,6 +16,7 @@ import { z } from "zod";
 
 import { embed } from "./embed.js";
 import { buildVaultIndex, isVaultStale } from "./indexer.js";
+import { isSuperseded } from "./frontmatter.js";
 import { saveNote } from "./notes.js";
 import { getSearchable, hybridSearch, listVaults, type SearchHit } from "./store.js";
 import {
@@ -115,9 +116,16 @@ server.registerTool(
             limit: z.number().int().min(1).max(20).optional().describe(
                 `Quantos trechos devolver (padrão ${DEFAULT_LIMIT}).`,
             ),
+            since: z.string().optional().describe(
+                "Data mínima da nota, no formato AAAA-MM-DD. Use quando a pergunta "
+                + "delimitar tempo — 'o que decidimos em julho?' vira since=2026-07-01 "
+                + "e until=2026-07-31. A busca semântica NÃO entende datas sozinha; "
+                + "sem este filtro, perguntas sobre período não funcionam.",
+            ),
+            until: z.string().optional().describe("Data máxima da nota, AAAA-MM-DD."),
         },
     },
-    async ({ query, vault, limit }) => {
+    async ({ query, vault, limit, since, until }) => {
         await refreshIfStale(vault);
         const searchable = getSearchable(vault);
         const chunks = searchable.chunks;
@@ -148,7 +156,9 @@ server.registerTool(
             };
         }
 
-        const hits = hybridSearch(query, queryEmbedding, searchable, limit ?? DEFAULT_LIMIT);
+        const hits = hybridSearch(
+            query, queryEmbedding, searchable, limit ?? DEFAULT_LIMIT, { since, until },
+        );
 
         return { content: [{ type: "text", text: formatHits(query, hits) }] };
     },
@@ -366,9 +376,21 @@ function formatHits(query: string, hits: SearchHit[]): string {
     const blocks = hits.map((hit, position) => {
         // O texto guardado começa com a linha "Fonte: <arquivo>", redundante aqui.
         const body = hit.text.split("\n").slice(1).join("\n").trim();
-        return `--- [${position + 1}] ${hit.vault}/${hit.source} `
+
+        const date = hit.meta.date !== undefined ? `, ${hit.meta.date}` : "";
+
+        // O aviso mais importante da saída: a nota existe, mas foi revista. Sem isto,
+        // uma decisão revogada seria apresentada como se ainda valesse.
+        const superseded = isSuperseded(hit.meta)
+            ? `\n⚠️ DECISÃO REVISTA — esta nota foi substituída`
+                + `${hit.meta.supersededBy !== undefined ? ` por "${hit.meta.supersededBy}"` : ""}. `
+                + "Não a apresente como decisão vigente; diga que foi superada e, se útil, "
+                + "busque a nota que a substitui."
+            : "";
+
+        return `--- [${position + 1}] ${hit.vault}/${hit.source}${date} `
             + `(semelhança ${hit.cosine.toFixed(3)}, `
-            + `termos em comum ${(hit.coverage * 100).toFixed(0)}%) ---\n${body}`;
+            + `termos em comum ${(hit.coverage * 100).toFixed(0)}%) ---${superseded}\n${body}`;
     });
 
     return [header, ...blocks].join("\n");

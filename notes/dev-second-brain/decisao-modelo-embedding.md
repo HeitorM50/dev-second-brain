@@ -1,3 +1,11 @@
+---
+data: 2026-08-11
+projeto: dev-second-brain
+tags: [embeddings, modelo, decisao]
+status: ativo
+supersedes: decisao-embeddings-locais-ollama
+---
+
 # Decisão: modelo de embedding
 
 **Status:** decidido em 2026-08-11.

@@ -1,3 +1,10 @@
+---
+data: 2026-08-11
+projeto: dev-second-brain
+tags: [indice, armazenamento, decisao]
+status: ativo
+---
+
 # Decisão: onde guardar o índice vetorial
 
 **Status:** decidido em 2026-08-11.

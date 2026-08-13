@@ -1,3 +1,10 @@
+---
+data: 2026-07-05
+projeto: taskflow
+tags: [arquitetura, visao-geral]
+status: ativo
+---
+
 # Arquitetura geral — TaskFlow
 
 TaskFlow é um app de gerenciamento de tarefas com colaboração em tempo real.
