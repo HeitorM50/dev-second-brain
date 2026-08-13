@@ -8,6 +8,103 @@ _Última atualização: 2026-08-12_
 
 ---
 
+## 0. Onde estamos — painel
+
+> **Situação: Fase 1 concluída.** A ferramenta é usável no dia a dia, de dentro de
+> qualquer projeto. Não estamos na Fase 2 — estamos num **intervalo de consolidação**,
+> em que o trabalho é qualidade e captura, não interface nova.
+
+```mermaid
+flowchart LR
+    subgraph FEITO["✅ CONCLUÍDO"]
+        direction TB
+        E1["MVP: pipeline RAG<br/>de 5 passos"]
+        E2["Servidor MCP<br/>escopo de usuário"]
+        E3["Vaults por projeto<br/>+ registro conversacional"]
+        E4["Captura por conversa<br/>save_note"]
+        E5["Indexação incremental<br/>+ frescor automático"]
+        E6["Suíte de avaliação<br/>+ busca híbrida"]
+    end
+
+    AGORA["🎯 <b>AGORA</b><br/>Ampliar a suíte<br/>de avaliação"]
+
+    subgraph PROXIMOS["⏭️ PRÓXIMOS — qualidade e confiança"]
+        direction TB
+        P1["Expansão por grafo<br/>seguir links [[...]]"]
+        P2["Contexto hierárquico<br/>no chunk"]
+        P3["Front-matter<br/>+ decisões substituídas"]
+        P4["Peso por recência"]
+    end
+
+    subgraph DEPOIS["🔭 DEPOIS — alcance e captura"]
+        direction TB
+        D1["Vault automático<br/>pelo diretório"]
+        D2["Captura de<br/>fim de sessão"]
+        D3["Ingestão de<br/>fontes extensas"]
+        D4["FASE 2<br/>aplicativo local"]
+    end
+
+    FEITO --> AGORA --> PROXIMOS --> DEPOIS
+
+    classDef feito fill:#2d5016,stroke:#7cb342,color:#fff
+    classDef agora fill:#7a5c00,stroke:#ffc107,color:#fff
+    classDef proximo fill:#1a3a52,stroke:#4a9eda,color:#fff
+    classDef depois fill:#3d2a52,stroke:#a06fd6,color:#fff
+
+    class E1,E2,E3,E4,E5,E6 feito
+    class AGORA agora
+    class P1,P2,P3,P4 proximo
+    class D1,D2,D3,D4 depois
+```
+
+### 🎯 O procedimento a executar agora
+
+**Ampliar a suíte de avaliação** — e isto vem antes de qualquer melhoria nova, por um
+motivo concreto: com **Recall@5 em 100%** em toda configuração testada, a suíte hoje
+detecta regressão mas **não consegue medir ganho**. Ela já me enganou duas vezes (ver
+seções 8 e 9). Implementar melhorias sem conseguir medi-las é trocar engenharia por fé.
+
+O que fazer, em ordem:
+
+1. **Acrescentar perguntas difíceis** a `eval/questions.json`, especialmente:
+   - consultas por **identificador exato** (nome de função, constante, código de erro,
+     sigla) — o ponto cego declarado da busca semântica e a justificativa do BM25;
+   - perguntas cuja resposta está numa nota **citada por link**, e não na mais parecida
+     — essas medem a expansão por grafo antes de ela existir;
+   - perguntas **ambíguas entre projetos**, para verificar o isolamento por vault.
+2. **Incluir o vault `grupo03`** nas perguntas. Hoje a suíte só cobre `taskflow` e
+   `dev-second-brain`, ambos pequenos; o vault de 1.543 trechos não é avaliado.
+3. **Rodar `npm run eval`** e confirmar que Recall@5 saiu de 100% — se continuar em 100%,
+   as perguntas ainda estão fáceis demais.
+4. Só então voltar ao catálogo (seção 9) e implementar a próxima melhoria, medindo
+   antes e depois.
+
+> **Regra ao escrever perguntas:** nunca cite o texto dos controles negativos na
+> documentação. O vault `dev-second-brain` indexa `docs/`, e isso já contaminou a suíte
+> uma vez (seção 8).
+
+### Estado por frente
+
+| Frente | Estado | Detalhe |
+|---|---|---|
+| 🔓 **Alcance** | ✅ resolvido | MCP global; vaults apontam para qualquer pasta; `add_vault` por conversa |
+| ✍️ **Captura** | 🟡 parcial | `save_note` funciona. Faltam captura de fim de sessão e ingestão de fontes extensas |
+| 🔄 **Frescor** | ✅ resolvido | Índice em memória + reindexação automática por data de modificação |
+| 🎯 **Qualidade** | 🟡 parcial | Busca híbrida entregue, mas **não comprovada** — a suíte não tem folga para medir |
+| 🧭 **Confiança** | 🔴 aberto | Sem front-matter, sem marcação de decisão substituída, sem peso por recência |
+| 🖥️ **Interface** | ⬜ adiada | Fase 2 virou opcional: o Claude Code já é a interface |
+
+### O que NÃO fazer agora
+
+- **Fase 2 (aplicativo local).** Deixou de ser necessária quando o Claude Code virou a
+  interface. Construir tela agora é adiar o que realmente limita a ferramenta.
+- **Trocar o armazenamento.** JSON aguenta muito além do volume atual; os gatilhos de
+  migração estão na seção 7.
+- **Reranking.** Complexidade alta para ganho marginal neste volume.
+- **Captura a partir do git.** Commit não é decisão; geraria ruído que afoga as notas boas.
+
+---
+
 ## 1. A ideia central em uma frase
 
 > **Os arquivos `.md` são a fonte da verdade. Todo o resto é derivado deles.**
@@ -164,6 +261,56 @@ reescrever um arquivo só — o resto do sistema não sabe onde os dados moram.
 
 ---
 
+### Registro de vaults e comportamento em escala real _(2026-08-11)_
+
+**As notas não precisam morar neste repositório.** O `vaults.json` declara, para cada
+vault, quais pastas o alimentam — podendo apontar para a documentação de outro projeto,
+que continua sendo editada e versionada onde sempre esteve. Só o índice derivado mora
+aqui. Um vault pode ter **várias fontes**, o que permite combinar a documentação oficial
+de um projeto com anotações privadas que não vão para o repositório do trabalho.
+
+Pastas precisam ser declaradas de propósito: varrer o disco atrás de markdown indexaria
+README de dependência e changelog gerado, derrubando a qualidade da busca.
+
+**Números com um projeto real** (93 arquivos, ~175 mil palavras):
+
+| Medida | Valor |
+|---|---|
+| Chunks gerados | 1.543 |
+| Primeira indexação | 28 min (~1,1s por chunk) |
+| Reindexação sem mudanças | 0,6s |
+| Índice em disco | 32 MB |
+| Busca no vault | 0,9s |
+| Busca cruzada nos 3 vaults (1.596 chunks) | 0,65s |
+| Controle (assunto ausente) | 0,373 contra 0,568 de um acerto |
+
+Mesmo com o projeto grande representando **97% do índice**, a busca cruzada continua
+trazendo as notas certas dos vaults pequenos: volume não afoga relevância.
+
+### O que os dados reais quebraram
+
+Três defeitos que só apareceram fora do conjunto de exemplo:
+
+1. **Paralelismo rende 1,5×, não 4×.** Embeddar é limitado por CPU, não por espera de
+   rede — um único embedding já ocupa todos os núcleos, então não há ociosidade para
+   preencher. Medido: concorrência 4 é o ponto ótimo; acima de 8 a disputa piora tudo.
+   _Paralelismo só acelera o que está esperando._
+2. **O fatiador não sabia dividir.** Havia mínimo, não havia máximo. Seções sem
+   subtítulo (cronogramas, tabelas longas) geraram chunks de até 21 mil caracteres, que
+   estouram a janela do modelo — o Ollama responde 500. Agora existe
+   `MAX_CHUNK_LENGTH = 2000`, quebrando em fronteiras de parágrafo e repetindo o título
+   da seção em cada pedaço. Também melhora a busca: um vetor para 20 páginas vira uma
+   média sem foco.
+3. **Um chunk ruim derrubava a indexação inteira.** 1.333 trechos válidos eram perdidos
+   por causa de 1 problemático. Agora a falha é registrada, o trecho é pulado e o índice
+   é salvo.
+
+E um defeito de configuração: o `tsconfig.json` tinha `"types": []`, que desliga todos
+os pacotes de tipos globais — o `@types/node` estava instalado e ignorado desde o
+início. Como o `tsx` não checa tipos, nada reclamava. Corrigido; use `npm run typecheck`.
+
+---
+
 ## 5. Roadmap por fases
 
 ```mermaid
@@ -262,54 +409,6 @@ mensalidade.
 **O que resta:** projeto Next.js, camada sobre o núcleo, UI de busca, streaming da
 resposta, empacotamento como serviço de usuário, e um atalho global de "pergunta rápida"
 no estilo launcher.
-
-### Registro de vaults e comportamento em escala real _(2026-08-11)_
-
-**As notas não precisam morar neste repositório.** O `vaults.json` declara, para cada
-vault, quais pastas o alimentam — podendo apontar para a documentação de outro projeto,
-que continua sendo editada e versionada onde sempre esteve. Só o índice derivado mora
-aqui. Um vault pode ter **várias fontes**, o que permite combinar a documentação oficial
-de um projeto com anotações privadas que não vão para o repositório do trabalho.
-
-Pastas precisam ser declaradas de propósito: varrer o disco atrás de markdown indexaria
-README de dependência e changelog gerado, derrubando a qualidade da busca.
-
-**Números com um projeto real** (93 arquivos, ~175 mil palavras):
-
-| Medida | Valor |
-|---|---|
-| Chunks gerados | 1.543 |
-| Primeira indexação | 28 min (~1,1s por chunk) |
-| Reindexação sem mudanças | 0,6s |
-| Índice em disco | 32 MB |
-| Busca no vault | 0,9s |
-| Busca cruzada nos 3 vaults (1.596 chunks) | 0,65s |
-| Controle (assunto ausente) | 0,373 contra 0,568 de um acerto |
-
-Mesmo com o projeto grande representando **97% do índice**, a busca cruzada continua
-trazendo as notas certas dos vaults pequenos: volume não afoga relevância.
-
-### O que os dados reais quebraram
-
-Três defeitos que só apareceram fora do conjunto de exemplo:
-
-1. **Paralelismo rende 1,5×, não 4×.** Embeddar é limitado por CPU, não por espera de
-   rede — um único embedding já ocupa todos os núcleos, então não há ociosidade para
-   preencher. Medido: concorrência 4 é o ponto ótimo; acima de 8 a disputa piora tudo.
-   _Paralelismo só acelera o que está esperando._
-2. **O fatiador não sabia dividir.** Havia mínimo, não havia máximo. Seções sem
-   subtítulo (cronogramas, tabelas longas) geraram chunks de até 21 mil caracteres, que
-   estouram a janela do modelo — o Ollama responde 500. Agora existe
-   `MAX_CHUNK_LENGTH = 2000`, quebrando em fronteiras de parágrafo e repetindo o título
-   da seção em cada pedaço. Também melhora a busca: um vetor para 20 páginas vira uma
-   média sem foco.
-3. **Um chunk ruim derrubava a indexação inteira.** 1.333 trechos válidos eram perdidos
-   por causa de 1 problemático. Agora a falha é registrada, o trecho é pulado e o índice
-   é salvo.
-
-E um defeito de configuração: o `tsconfig.json` tinha `"types": []`, que desliga todos
-os pacotes de tipos globais — o `@types/node` estava instalado e ignorado desde o
-início. Como o `tsx` não checa tipos, nada reclamava. Corrigido; use `npm run typecheck`.
 
 ### Fase 3 — Ingestão facilitada 💡 ideia
 
@@ -613,6 +712,22 @@ O critério é **o que destrava as outras coisas**, não o que é mais interessa
 7. Depois: expansão por grafo, contexto hierárquico, peso por recência, front-matter. Cada um medido com `npm run eval` antes e depois
 
 ## 10. Onde retomar
+
+👉 **Comece pela [seção 0](#0-onde-estamos--painel)**: ela diz em que fase o projeto
+está, qual procedimento executar agora e o que fica para depois. As seções seguintes
+são o detalhamento.
+
+Ordem de leitura sugerida ao retomar depois de um tempo:
+
+| Se você quer... | Vá para |
+|---|---|
+| Saber o que fazer agora | seção 0 |
+| Entender o desenho do sistema | seções 2 a 4 |
+| Lembrar por que algo foi decidido assim | seção 7 |
+| Mexer na busca | seção 8 (mede antes e depois) |
+| Escolher a próxima melhoria | seção 9 |
+
+### Contexto original
 
 O ponto exato do trabalho vive na seção **"Estado atual"** do `docs/mvp.md` —
 é o arquivo a abrir no início de cada sessão. Este mapa é a visão de cima;

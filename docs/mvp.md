@@ -2,7 +2,7 @@
 
 Documento vivo com as decisões e o escopo da primeira versão. Atualize conforme o projeto evolui.
 
-_Última atualização: 2026-08-11_
+_Última atualização: 2026-08-12_
 
 > Visão de cima (diagramas do sistema, fases e roadmap): **`docs/arquitetura.md`**.
 > Este documento aqui guarda as **decisões** e o **ponto exato** onde retomar.
@@ -51,15 +51,15 @@ trechos relevantes e só então **gera-se** a resposta com base neles.
 3. **Embeddar** — transformar cada pedaço num vetor (lista de números) de forma
    que textos com **significado parecido** fiquem **próximos** nesse espaço.
    É isso que faz "qual banco escolhemos?" encontrar "decidimos usar Postgres".
-   _(em andamento — `embed()` funcionando via Ollama; falta rodar em todos os chunks)_
+   _(feito — via Ollama com `bge-m3`)_
 4. **Indexar** — guardar os vetores num índice de busca vetorial.
+   _(feito — JSON por vault, com busca híbrida cosseno + BM25)_
 5. **Consultar** — embeddar a pergunta, achar os pedaços mais próximos, entregar
    esses pedaços + a pergunta ao Claude e receber a resposta **citando a fonte**.
+   _(feito — via servidor MCP; o Claude Code é quem redige)_
 
-> Decisões já tomadas: passo 2 (chunking por seção) e passo 3 (embeddings via
-> Ollama) — ver a tabela acima. Faltam os passos 4 e 5 (índice vetorial local vs.
-> pgvector; qual LLM gera a resposta), que serão decididos ao chegar neles, com o
-> trade-off na mesa.
+> **Os cinco passos estão concluídos.** As decisões de cada um, com as alternativas
+> descartadas, estão na tabela acima.
 
 ---
 
@@ -68,8 +68,11 @@ trechos relevantes e só então **gera-se** a resposta com base neles.
 **Dentro:** uma pasta → um índice → uma pergunta em português → uma resposta com
 citação da nota de origem.
 
-**Fora por enquanto:** atualização automática, múltiplas fontes, GitHub, chats,
-geração de notas, interface Next.js, separação por projeto.
+**Fora do MVP original, mas já entregues depois dele:** atualização automática do
+índice, separação por projeto (vaults) e geração de notas por conversa (`save_note`).
+
+**Ainda fora:** múltiplas fontes (GitHub, chats), ingestão de fontes extensas e
+interface própria — ver o catálogo em `docs/arquitetura.md`, seção 9.
 
 ---
 
@@ -77,17 +80,18 @@ geração de notas, interface Next.js, separação por projeto.
 
 Ideias registradas para não se perderem; ainda **não** fazem parte do MVP.
 
-- **Gerador de notas a partir de ideias soltas.** Eu dou uma ideia crua para uma
-  IA, ela estrutura melhor e já gera o `.md` bem-formatado na pasta de notas.
-  _(Observação: isso é a "outra metade" do sistema — a parte de ingestão que
-  **cria** markdown. O MVP cobre a metade que **consulta** o markdown existente.)_
-- **Ingestão de fontes extensas → várias notas.** Dado um projeto com documentação
-  grande e várias fontes de informação, trazer esse material da forma mais prática
-  possível para o gerador ler e produzir várias notas alimentando a pasta.
-- Atualização automática e contínua conforme o projeto evolui.
-- Novas fontes: GitHub (PRs, issues, commits), conversas com LLMs, chats de equipe.
-- Interface web em Next.js sobre o núcleo do RAG.
-- Separação e isolamento por projeto (um "vault" por projeto).
+> ℹ️ **O backlog vivo mudou de casa.** O catálogo completo, agrupado por problema e
+> com esforço estimado, está em `docs/arquitetura.md`, seção 9. Abaixo fica só o
+> registro histórico das ideias originais e o que aconteceu com cada uma.
+
+- ✅ **Gerador de notas a partir de ideias soltas** — virou a ferramenta `save_note`,
+  sem precisar de app: a nota nasce da conversa com o Claude Code.
+- ⬜ **Ingestão de fontes extensas → várias notas.** Continua no catálogo.
+- ✅ **Atualização automática conforme o projeto evolui** — o servidor MCP reindexa
+  sozinho ao detectar mudança nas notas.
+- ⬜ **Novas fontes:** GitHub, conversas com LLMs, chats de equipe.
+- ⬜ **Interface própria** — rebaixada a opcional; o Claude Code virou a interface.
+- ✅ **Separação por projeto** — vaults, com índice e pasta de escrita próprios.
 
 ---
 
@@ -155,30 +159,8 @@ O trabalho daqui em diante é **expansão**, não MVP. Ver `docs/arquitetura.md`
 
 ### Próximo
 
-- **Conjunto de avaliação da busca** — hoje a qualidade é julgada por perguntas
-  inventadas na hora. Montar uma lista de perguntas com a nota correta esperada e um
-  script que pontue, para conseguir saber se uma mudança melhorou ou piorou.
-- Catálogo completo de melhorias: `docs/arquitetura.md`, seção 8.
-- **Separação por vault — CONCLUÍDA:** cada subpasta de `notes/` é um vault (um
-  projeto) e gera seu próprio índice em `data/vaults/<nome>.json`. Existem dois hoje:
-  `taskflow` (dados de exemplo) e `dev-second-brain` (decisões reais deste projeto).
-  A busca aceita `--vault <nome>` para escopo único ou cruza todos por padrão.
-  Demonstração da diferença, com a pergunta *"por que escolhemos Postgres?"*:
-  no vault `taskflow` os 3 resultados vêm da decisão do TaskFlow; cruzando tudo, o
-  3º lugar passa a ser a nota deste projeto que **descartou** o Postgres — mesma
-  palavra, decisão oposta. É o problema de corretude que motivou a separação.
-- **Indexação incremental — CONCLUÍDA:** cada chunk guarda um hash SHA-256 do texto;
-  o `ingest` reaproveita os embeddings de tudo que não mudou. Reindexar sem mudanças
-  caiu de **13,8s para 0,0s**; editar uma nota custa **0,5s**. O arquivo de índice
-  passou a gravar o modelo usado (`{ model, chunks }`) e descarta o cache inteiro se
-  o modelo mudar — sem isso, trocar de modelo deixaria vetores incompatíveis no
-  índice de forma silenciosa.
-- **Dívida conhecida** (não bloqueia o MVP): **conjunto de avaliação** — a qualidade
-  da busca está sendo julgada por perguntas inventadas na hora, não medida.
+👉 **O painel de status vive em `docs/arquitetura.md`, seção 0** — fase atual,
+procedimento a executar agora, estado por frente e o que deliberadamente não fazer.
 
-> **Modo de trabalho mudou em 2026-08-11:** o Claude escreve o código e roda os
-> comandos; o Heitor acompanha para entender. Ver `CLAUDE.md`.
-
-> Método: ensino por **checkpoints** — ver a skill `.claude/skills/ensino-checkpoints/`.
-> O Heitor digita e roda cada passo; o Claude guia e explica. Ver também "Modo de
-> trabalho" no `CLAUDE.md`.
+Resumo em uma linha: Fase 1 concluída; o próximo passo é **ampliar a suíte de
+avaliação**, porque ela hoje detecta regressão mas não mede ganho.
