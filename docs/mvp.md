@@ -147,11 +147,18 @@ O trabalho daqui em diante é **expansão**, não MVP. Ver `docs/arquitetura.md`
   A varredura de cosseno sobre 1.543 chunks custa **4ms** — o gargalo sempre foi ler o
   JSON, nunca a matemática.
 
+- **`save_note` via MCP:** captura conversando — _"anota que decidimos X porque Y"_ vira
+  um `.md` estruturado no vault, indexado na hora e buscável em seguida. O vault declara
+  `writeTo`; sem isso a escrita é recusada, para uma anotação pessoal nunca cair no
+  repositório de trabalho de um cliente. O título vira nome de arquivo com sanitização
+  contra *path traversal* (testado com `../../.ssh/authorized_keys` e afins).
+
 ### Próximo
 
-- **`save_note` via MCP** — captura conversando: _"anota que decidimos X porque Y"_ vira
-  um `.md` formatado no vault certo. É o gargalo real: sem captura barata, o vault não
-  cresce. Catálogo completo de melhorias em `docs/arquitetura.md`, seção 8.
+- **Conjunto de avaliação da busca** — hoje a qualidade é julgada por perguntas
+  inventadas na hora. Montar uma lista de perguntas com a nota correta esperada e um
+  script que pontue, para conseguir saber se uma mudança melhorou ou piorou.
+- Catálogo completo de melhorias: `docs/arquitetura.md`, seção 8.
 - **Separação por vault — CONCLUÍDA:** cada subpasta de `notes/` é um vault (um
   projeto) e gera seu próprio índice em `data/vaults/<nome>.json`. Existem dois hoje:
   `taskflow` (dados de exemplo) e `dev-second-brain` (decisões reais deste projeto).

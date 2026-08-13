@@ -83,7 +83,14 @@ Ferramentas expostas:
 | Ferramenta | O que faz |
 |---|---|
 | `search_notes(query, vault?, limit?)` | Busca semântica. Sem `vault`, cruza todos os projetos |
+| `save_note(vault, title, content)` | Cria uma nota a partir da conversa, indexada na hora |
 | `list_vaults()` | Lista os projetos indexados |
+
+Para registrar algo, basta dizer:
+
+> _"anota aí que decidimos usar sessão própria em vez de Auth0, por causa do custo por usuário"_
+
+A nota vira um `.md` estruturado na pasta `writeTo` do vault e fica buscável imediatamente. O índice também se atualiza sozinho quando você edita uma nota pelo editor — não é preciso rodar `npm run ingest` a cada mudança.
 
 ### Pelo terminal (depuração)
 
@@ -132,7 +139,10 @@ Escolha um nome curto e em minúsculas — é por ele que você vai se referir a
 **Projeto sem documentação, ou anotações que não devem ir para o repositório do trabalho** — crie uma pasta aqui dentro e escreva nela.
 
 ```json
-"cliente-x": { "sources": ["notes/cliente-x"] }
+"cliente-x": {
+  "sources": ["notes/cliente-x"],
+  "writeTo": "notes/cliente-x"
+}
 ```
 
 **Os dois ao mesmo tempo** — documentação oficial do projeto mais anotações privadas suas, consultáveis juntas:
@@ -142,9 +152,16 @@ Escolha um nome curto e em minúsculas — é por ele que você vai se referir a
   "sources": [
     "/home/heitor/Projects/crianex/docs",
     "notes/crianex"
-  ]
+  ],
+  "writeTo": "notes/crianex"
 }
 ```
+
+### `writeTo` — onde as notas novas nascem
+
+O `save_note` só escreve na pasta declarada em `writeTo`, e **recusa** criar a nota se ela não existir na configuração. É proposital: sem essa declaração, uma anotação pessoal poderia acabar dentro do repositório de trabalho de um cliente e virar um commit indesejado.
+
+Aponte o `writeTo` para uma pasta pessoal — normalmente `notes/<projeto>` — mesmo quando o vault também indexa a documentação de um repositório externo.
 
 ### Filtrando ruído
 

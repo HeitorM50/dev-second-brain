@@ -12,6 +12,12 @@ export type VaultConfig = {
     sources: string[];
     /** Trechos de caminho a ignorar, ex.: ["changelog", "api-reference"]. */
     exclude?: string[];
+    /**
+     * Onda notas novas são criadas por `save_note`. Precisa ser declarada: sem isto,
+     * uma anotação pessoal poderia acabar dentro do repositório de trabalho de um
+     * cliente. Deve ser uma das `sources`, para a nota ficar indexada.
+     */
+    writeTo?: string;
 };
 
 type VaultsFile = {
@@ -35,6 +41,18 @@ export function loadVaultConfig(): Record<string, VaultConfig> {
 /** Caminhos configurados são relativos à raiz do projeto, salvo se já forem absolutos. */
 function resolveSource(source: string): string {
     return isAbsolute(source) ? source : resolve(PROJECT_ROOT, source);
+}
+
+/**
+ * Pasta onde novas notas do vault devem ser criadas, já resolvida para caminho
+ * absoluto. Devolve null quando o vault não declara `writeTo` — nesse caso a
+ * escrita é recusada, em vez de escolher uma pasta por conta própria.
+ */
+export function resolveWriteDir(config: VaultConfig): string | null {
+    if (config.writeTo === undefined) {
+        return null;
+    }
+    return resolveSource(config.writeTo);
 }
 
 export type MarkdownFile = {

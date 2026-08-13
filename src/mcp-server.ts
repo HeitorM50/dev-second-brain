@@ -14,6 +14,7 @@ import { z } from "zod";
 
 import { embed } from "./embed.js";
 import { buildVaultIndex, isVaultStale } from "./indexer.js";
+import { saveNote } from "./notes.js";
 import { listVaults, loadChunks, search, type SearchHit } from "./store.js";
 import { loadVaultConfig } from "./vaults.js";
 
@@ -135,6 +136,74 @@ server.registerTool(
         const hits = search(queryEmbedding, chunks, limit ?? DEFAULT_LIMIT);
 
         return { content: [{ type: "text", text: formatHits(query, hits) }] };
+    },
+);
+
+server.registerTool(
+    "save_note",
+    {
+        title: "Registrar nota",
+        description:
+            "Cria uma nota permanente no segundo cérebro do Heitor, a partir do que foi "
+            + "conversado. Use quando ele decidir algo, explicar por que escolheu uma "
+            + "abordagem, ou pedir para 'anotar', 'registrar' ou 'guardar' alguma coisa. "
+            + "Ofereça registrar quando uma decisão relevante for tomada e ainda não estiver "
+            + "anotada. "
+            + "Escreva o conteúdo como markdown bem estruturado, em português, com seções "
+            + "curtas — e SEMPRE inclua o PORQUÊ da decisão e as alternativas descartadas, "
+            + "que é o que o Heitor vai querer lembrar meses depois. Não repita o título no "
+            + "corpo: ele já vira o cabeçalho da nota. "
+            + "A nota fica buscável imediatamente.",
+        inputSchema: {
+            vault: z.string().describe(
+                "Projeto ao qual a nota pertence. Use list_vaults se não souber o nome.",
+            ),
+            title: z.string().describe(
+                "Título curto e descritivo, ex.: 'Decisão: modelo de embedding'. "
+                + "Vira o cabeçalho e o nome do arquivo.",
+            ),
+            content: z.string().describe(
+                "Corpo da nota em markdown, sem repetir o título. Prefira seções como "
+                + "'O que ficou decidido', 'Por quê', 'Alternativas consideradas'.",
+            ),
+        },
+    },
+    async ({ vault, title, content }) => {
+        const config = loadVaultConfig();
+        const vaultConfig = config[vault];
+
+        if (vaultConfig === undefined) {
+            const available = Object.keys(config).join(", ");
+            return {
+                content: [{ type: "text", text: `Vault "${vault}" não existe. Disponíveis: ${available}.` }],
+                isError: true,
+            };
+        }
+
+        const result = saveNote(vault, vaultConfig, title, content);
+
+        if ("error" in result) {
+            return { content: [{ type: "text", text: result.error }], isError: true };
+        }
+
+        // Indexa na hora: a nota precisa estar buscável no segundo seguinte, senão
+        // registrar e consultar não formam um ciclo.
+        let indexNote = "";
+        try {
+            const indexed = await buildVaultIndex(vault, vaultConfig);
+            indexNote = ` Indexada (${indexed.computed} trechos novos).`;
+        } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            indexNote = ` A nota foi salva, mas a indexação falhou (${detail}) — `
+                + "rode `npm run ingest` quando o Ollama voltar.";
+        }
+
+        return {
+            content: [{
+                type: "text",
+                text: `Nota criada em ${vault}/${result.label}.${indexNote}`,
+            }],
+        };
     },
 );
 

@@ -151,6 +151,7 @@ flowchart TD
 | `src/ingest.ts` | Passos 1–4: lê `notes/`, fatia, embedda, salva |
 | `src/embed.ts` | Texto → vetor, via Ollama |
 | `src/indexer.ts` | Pipeline de indexação como **módulo chamável** — usado pelo CLI e pelo servidor MCP |
+| `src/notes.ts` | Criação de notas a partir de conversa: slug seguro e escrita restrita ao vault |
 | `src/vaults.ts` | **Registro de vaults**: quais pastas alimentam cada projeto; varredura recursiva de `.md` |
 | `src/concurrency.ts` | Pool de trabalhadores para embeddar em paralelo com pressão controlada |
 | `src/store.ts` | **Fronteira de armazenamento**: salvar, carregar, hash, cache de embeddings, similaridade, busca |
@@ -469,7 +470,7 @@ fácil morre vazia.
 
 | | Ideia | O que é | Esforço |
 |---|---|---|---|
-| ⬜ | **`save_note` via MCP** ⭐ | Conversando: _"anota que decidimos X porque Y"_ → o Claude escreve o `.md` formatado no vault certo. É o "gerador de notas" idealizado no começo, sem precisar de app | 🟡 médio |
+| ✅ | **`save_note` via MCP** | Feito em 2026-08-12. Conversando: _"anota que decidimos X porque Y"_ → `.md` formatado no vault certo, indexado na hora. É o "gerador de notas" idealizado no começo, sem precisar de app. O vault declara `writeTo`; sem isso a escrita é **recusada**, para uma anotação pessoal nunca cair no repositório de trabalho de um cliente. Título vira nome de arquivo com sanitização contra *path traversal* | — |
 | ⬜ | Captura de fim de sessão | Ao terminar um trabalho, resumir as decisões tomadas e perguntar _"registro isso?"_ | 🟡 médio |
 | ⬜ | Ingestão de fontes extensas | Apontar para documentação grande e quebrar em várias notas temáticas | 🟠 grande |
 | ⬜ | Captura a partir do git | Gerar notas de "o que mudou e por quê" a partir de commits e PRs. _Ressalva: commit não é decisão; tende a gerar muita nota de baixo valor_ | 🟠 grande |
@@ -505,8 +506,8 @@ O critério é **o que destrava as outras coisas**, não o que é mais interessa
 
 1. ~~Escopo de usuário~~ ✅ — sem isso a ferramenta não existe fora deste repo
 2. ~~Índice em memória + invalidação~~ ✅ — pré-requisito da captura: nota salva precisa ficar buscável no segundo seguinte
-3. **`save_note`** ⬅️ **próximo** — fecha o ciclo. Sem captura o vault não cresce, e um segundo cérebro que não cresce é arquivo morto
-4. **Conjunto de avaliação** — antes de mexer na qualidade da busca, é preciso saber medi-la
+3. ~~`save_note`~~ ✅ — fecha o ciclo: conversa → nota → memória consultável
+4. **Conjunto de avaliação** ⬅️ **próximo** — antes de mexer na qualidade da busca, é preciso saber medi-la
 5. Depois: contexto hierárquico e peso por recência (pequenos, bom retorno), front-matter, busca híbrida
 
 ## 9. Onde retomar
