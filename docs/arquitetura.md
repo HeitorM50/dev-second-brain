@@ -4,7 +4,7 @@ Visão geral do sistema: o que já existe, o que é o MVP, e para onde ele cresc
 Complementa o `docs/mvp.md` (que guarda as **decisões** e o porquê de cada uma);
 aqui o foco é o **desenho** — como as peças se encaixam.
 
-_Última atualização: 2026-08-11_
+_Última atualização: 2026-08-12_
 
 ---
 
@@ -88,7 +88,7 @@ sequenceDiagram
     CLI->>CLI: lê os .md e fatia em chunks
     loop para cada chunk
         CLI->>Ollama: texto do chunk
-        Ollama-->>CLI: vetor de 768 números
+        Ollama-->>CLI: vetor de 1024 números
     end
     CLI->>Idx: salva os vetores + o texto de origem
     end
@@ -122,9 +122,9 @@ entre elas significa alguma coisa.
 flowchart TD
     P1["<b>1. INGERIR</b><br/>readdirSync + readFileSync<br/>lê os .md de notes/"]
     P2["<b>2. FATIAR</b><br/>chunkByHeading + mergeSmallChunks<br/>1 seção = 1 chunk, carimbado com a fonte"]
-    P3["<b>3. EMBEDDAR</b><br/>embed via Ollama + nomic-embed-text<br/>cada chunk vira 768 números"]
-    P4["<b>4. INDEXAR</b><br/>guardar vetores + texto<br/>❓ formato ainda não decidido"]
-    P5["<b>5. CONSULTAR</b><br/>embeddar pergunta → achar vizinhos<br/>→ LLM redige com citação"]
+    P3["<b>3. EMBEDDAR</b><br/>embed via Ollama + bge-m3<br/>cada chunk vira 1024 números"]
+    P4["<b>4. INDEXAR</b><br/>JSON por vault<br/>+ busca por cosseno"]
+    P5["<b>5. CONSULTAR</b><br/>servidor MCP → Claude Code<br/>redige citando a fonte"]
 
     P1 --> P2 --> P3 --> P4 --> P5
 
@@ -132,31 +132,31 @@ flowchart TD
     classDef andamento fill:#7a5c00,stroke:#ffc107,color:#fff
     classDef pendente fill:#3a3a3a,stroke:#888,color:#ccc
 
-    class P1,P2,P3,P4 feito
-    class P5 andamento
+    class P1,P2,P3,P4,P5 feito
 ```
 
-| | Passo | Estado | O que existe hoje em `src/ingest.ts` |
+| | Passo | Estado | O que existe hoje |
 |---|---|---|---|
-| ✅ | 1. Ingerir | **Concluído** | Lê `notes/`, filtra `.md`, carrega o conteúdo |
-| ✅ | 2. Fatiar | **Concluído** | `chunkByHeading` corta em títulos; `mergeSmallChunks` funde os menores que 120 caracteres; cada chunk recebe `Fonte: <nota>` |
-| ✅ | 3. Embeddar | **Concluído** | `src/embed.ts` chama o Ollama com **bge-m3** (1024 dimensões) |
-| ✅ | 4. Indexar | **Concluído** | `src/store.ts` salva em `data/index.json`, implementa `cosineSimilarity` e `search` por varredura linear |
-| 🔸 | 5. Consultar | **Em andamento** | `npm run ask -- "pergunta"` já recupera os trechos certos; **falta o LLM redigir a resposta citando a fonte** |
+| ✅ | 1. Ingerir | **Concluído** | `src/vaults.ts` resolve as pastas de cada vault e varre `.md` recursivamente |
+| ✅ | 2. Fatiar | **Concluído** | Corta em títulos, funde os menores que 120 caracteres, divide os maiores que 2.000; cada chunk recebe `Fonte: <nota>` |
+| ✅ | 3. Embeddar | **Concluído** | `src/embed.ts` chama o Ollama com **bge-m3** (1024 dimensões), em paralelo e só o que mudou |
+| ✅ | 4. Indexar | **Concluído** | `src/store.ts` salva em `data/vaults/<vault>.json`, implementa `cosineSimilarity` e `search` por varredura linear |
+| ✅ | 5. Consultar | **Concluído** | `src/mcp-server.ts` expõe a busca ao Claude Code, que redige citando a fonte. `npm run ask` serve para depuração |
 
 ### Módulos hoje
 
 | Arquivo | Responsabilidade |
 |---|---|
-| `src/ingest.ts` | Passos 1–4: lê `notes/`, fatia, embedda, salva |
+| `src/ingest.ts` | CLI de indexação — casca fina sobre `indexer.ts` |
 | `src/embed.ts` | Texto → vetor, via Ollama |
+| `src/eval.ts` | Avaliação da qualidade da busca (`npm run eval`) |
 | `src/indexer.ts` | Pipeline de indexação como **módulo chamável** — usado pelo CLI e pelo servidor MCP |
 | `src/notes.ts` | Criação de notas a partir de conversa: slug seguro e escrita restrita ao vault |
 | `src/vaults.ts` | **Registro de vaults**: quais pastas alimentam cada projeto; varredura recursiva de `.md` |
 | `src/concurrency.ts` | Pool de trabalhadores para embeddar em paralelo com pressão controlada |
 | `src/store.ts` | **Fronteira de armazenamento**: salvar, carregar, hash, cache de embeddings, similaridade, busca |
 | `src/ask.ts` | CLI de busca: recebe a pergunta e mostra os trechos mais próximos |
-| `src/mcp-server.ts` | **Servidor MCP**: expõe `list_vaults` e `search_notes` ao Claude Code |
+| `src/mcp-server.ts` | **Servidor MCP**: expõe `list_vaults`, `search_notes` e `save_note` ao Claude Code |
 
 `store.ts` existe justamente para que trocar JSON por outra coisa no futuro seja
 reescrever um arquivo só — o resto do sistema não sabe onde os dados moram.
@@ -168,7 +168,7 @@ reescrever um arquivo só — o resto do sistema não sabe onde os dados moram.
 ```mermaid
 flowchart LR
     F0["<b>FASE 0</b><br/>Fundação<br/>✅ concluída"]
-    F1["<b>FASE 1</b><br/>Núcleo RAG em CLI<br/>🔸 em andamento"]
+    F1["<b>FASE 1</b><br/>Núcleo RAG + MCP<br/>✅ concluída"]
     F2["<b>FASE 2</b><br/>Aplicativo local<br/>⬜ planejada"]
     F3["<b>FASE 3</b><br/>Ingestão facilitada<br/>💡 ideia"]
     F4["<b>FASE 4</b><br/>Múltiplas fontes<br/>e multi-projeto<br/>💡 ideia"]
@@ -181,8 +181,7 @@ flowchart LR
     classDef pendente fill:#3a3a3a,stroke:#888,color:#ccc
     classDef ideia fill:#3d2a52,stroke:#a06fd6,color:#fff
 
-    class F0 feito
-    class F1 andamento
+    class F0,F1 feito
     class F2 pendente
     class F3,F4 ideia
     style MVP fill:#1a3a52,stroke:#4a9eda,color:#fff
@@ -195,14 +194,14 @@ Repositório, documentação, ADRs, notas de exemplo do projeto fictício "TaskF
 
 **Não resta nada.**
 
-### Fase 1 — Núcleo RAG em CLI 🔸 em andamento
+### Fase 1 — Núcleo RAG + servidor MCP ✅ concluída
 
 O MVP propriamente dito: uma pasta → um índice → uma pergunta → uma resposta com fonte.
 
 **Concluído:**
 
 - [x] **Passo 3** — `embed()` rodando em todos os chunks
-- [x] **Passo 4** — índice persistido em `data/index.json`
+- [x] **Passo 4** — índice persistido em disco (hoje `data/vaults/<vault>.json`)
 - [x] **Passo 4** — similaridade de cosseno e busca dos *k* vizinhos, escritas à mão
 - [x] **Passo 5** — `npm run ask` embedda a pergunta e recupera os trechos certos
 - [x] Código separado em módulos (`embed.ts`, `store.ts`, `ask.ts`)
@@ -450,7 +449,54 @@ realmente aparecem:
 
 ---
 
-## 8. Catálogo de melhorias — o backlog vivo
+## 8. Qualidade da busca — baseline medido
+
+`npm run eval` roda 19 perguntas de `eval/questions.json`: 15 com nota correta esperada
+e 4 controles negativos (assuntos que não existem nos vaults). Rode antes e depois de
+qualquer mudança na busca.
+
+**Baseline em 2026-08-12** (vaults `taskflow` e `dev-second-brain`):
+
+| Métrica | Valor | O que significa |
+|---|---|---|
+| Recall@1 | 87% (13/15) | nota certa em primeiro lugar |
+| Recall@5 | **100%** | o trecho certo sempre chega ao contexto do LLM |
+| MRR | 0,933 | premia ranquear melhor, não só encontrar |
+| **Separação** | **−0,056** ⚠️ | ver abaixo |
+
+### O que a avaliação revelou — e corrigiu
+
+A recuperação é boa: **em 100% das perguntas o trecho certo entra no contexto**, que é
+o que determina se o LLM consegue responder.
+
+Mas a **separação é negativa**, e isso invalida uma conclusão registrada antes aqui:
+a de que existia "separação real entre relevante e lixo". Aquela conclusão vinha de
+**uma única** pergunta de controle. Com quatro, ela cai:
+
+```
+"como trocar o óleo do câmbio"  →  0,433   casou com "## Por que trocamos"
+"o que ficou pendente pra Ana?" →  0,377   acerto legítimo
+```
+
+O verbo "trocar" dominou a semelhança sem nenhuma relação de assunto, e pontuou **acima**
+de um acerto verdadeiro. Não existe limiar numérico que separe os dois grupos.
+
+**Lição:** pontuação de similaridade é **ordinal, não probabilidade**. Ela ordena
+resultados entre si; não mede relevância absoluta. Não há número mágico universal.
+
+**Mitigação adotada** — em vez de cortar por limiar (o que mataria acertos legítimos),
+quem julga relevância é o Claude, que lê o conteúdo:
+
+- a descrição de `search_notes` instrui a verificar se os trechos de fato respondem, e
+  a dizer que não encontrou registro em vez de construir resposta a partir de coincidência
+  de palavras;
+- a saída da ferramenta declara que a pontuação é relativa e exibe um aviso quando nem o
+  melhor resultado é forte.
+
+O caminho estrutural para melhorar isso é a **busca híbrida** (semântica + palavra
+exata), ainda no catálogo abaixo.
+
+## 9. Catálogo de melhorias — o backlog vivo
 
 Agrupado pelo **problema que cada ideia resolve**, não pela ordem em que surgiram.
 Marque como concluído conforme forem saindo.
@@ -486,7 +532,7 @@ fácil morre vazia.
 
 | | Ideia | O que é | Esforço |
 |---|---|---|---|
-| ⬜ | **Conjunto de avaliação** ⭐ | Perguntas com a nota correta esperada + script que pontua. Sem isso, toda mudança na busca é chute — hoje a qualidade é julgada por impressão | 🟡 médio |
+| ✅ | **Conjunto de avaliação** | Feito em 2026-08-12. `eval/questions.json` + `npm run eval`. Baseline e o que ele revelou logo abaixo | — |
 | ⬜ | Busca híbrida | Combinar semântica com palavra exata. A semântica é fraca justamente em identificadores: nomes de função, códigos de erro, siglas, nomes próprios | 🟡 médio |
 | ✅ | Teto de tamanho de chunk | Evita o vetor-média sem foco e o estouro de contexto | — |
 | ⬜ | Contexto hierárquico completo | Hoje o chunk carrega o nome do arquivo e o título da seção. Incluir o caminho inteiro de títulos (`Decisão banco > Alternativas > MongoDB`) | 🟢 pequeno |
@@ -507,10 +553,10 @@ O critério é **o que destrava as outras coisas**, não o que é mais interessa
 1. ~~Escopo de usuário~~ ✅ — sem isso a ferramenta não existe fora deste repo
 2. ~~Índice em memória + invalidação~~ ✅ — pré-requisito da captura: nota salva precisa ficar buscável no segundo seguinte
 3. ~~`save_note`~~ ✅ — fecha o ciclo: conversa → nota → memória consultável
-4. **Conjunto de avaliação** ⬅️ **próximo** — antes de mexer na qualidade da busca, é preciso saber medi-la
-5. Depois: contexto hierárquico e peso por recência (pequenos, bom retorno), front-matter, busca híbrida
+4. ~~Conjunto de avaliação~~ ✅ — agora "melhorou?" tem resposta numérica
+5. **Próximos** — contexto hierárquico e peso por recência (pequenos, bom retorno), front-matter, busca híbrida. Cada um deve ser medido com `npm run eval` antes e depois
 
-## 9. Onde retomar
+## 10. Onde retomar
 
 O ponto exato do trabalho vive na seção **"Estado atual"** do `docs/mvp.md` —
 é o arquivo a abrir no início de cada sessão. Este mapa é a visão de cima;

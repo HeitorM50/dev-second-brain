@@ -91,7 +91,13 @@ server.registerTool(
             + "exata, então vale usar a pergunta do usuário como está. "
             + "Use sempre que a pergunta for sobre decisões passadas, o histórico de um "
             + "projeto ou 'o que a gente decidiu sobre X'. "
-            + "Cite sempre a nota de origem devolvida em cada resultado.",
+            + "Cite sempre a nota de origem devolvida em cada resultado. "
+            + "IMPORTANTE: a busca SEMPRE devolve os trechos mais próximos, mesmo quando "
+            + "nenhum responde à pergunta — a pontuação ordena os resultados entre si e "
+            + "não mede relevância absoluta. Leia os trechos e julgue você mesmo se eles "
+            + "de fato respondem. Se não responderem, diga que não encontrou registro "
+            + "sobre o assunto; nunca construa uma resposta a partir de trechos que só "
+            + "compartilham uma palavra com a pergunta.",
         inputSchema: {
             query: z.string().describe("A pergunta ou tema a buscar, em linguagem natural."),
             vault: z.string().optional().describe(
@@ -209,7 +215,19 @@ server.registerTool(
 
 /** Formata os resultados como texto legível — é isso que entra no contexto do Claude. */
 function formatHits(query: string, hits: SearchHit[]): string {
-    const header = `${hits.length} trechos mais relevantes para "${query}":\n`;
+    const topScore = hits[0]?.score ?? 0;
+
+    // Aviso explícito quando nem o melhor resultado é forte. Não é um corte — o
+    // conteúdo continua sendo entregue — é um sinal para o julgamento de relevância.
+    const warning = topScore < 0.45
+        ? "\n⚠ Nenhum trecho teve semelhança alta. É provável que o vault não tenha "
+            + "registro sobre isto — confira se os trechos abaixo realmente respondem "
+            + "antes de usá-los.\n"
+        : "";
+
+    const header = `${hits.length} trechos mais próximos de "${query}"`
+        + " (pontuação ordena entre si; não mede relevância absoluta):\n"
+        + warning;
 
     const blocks = hits.map((hit, position) => {
         // O texto guardado começa com a linha "Fonte: <arquivo>", redundante aqui.

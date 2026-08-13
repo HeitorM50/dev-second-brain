@@ -1,0 +1,119 @@
+{
+  "_comment": "Conjunto de avaliação da busca. Rode com `npm run eval`. Perguntas com `expected` vazio são controles negativos: a resposta certa é NÃO ACHAR NADA. Acrescente perguntas conforme os vaults crescerem — o valor deste arquivo cresce junto.",
+  "questions": [
+    {
+      "id": "tf-01",
+      "vault": "taskflow",
+      "query": "qual banco de dados foi escolhido e por quê?",
+      "expected": ["decisao-banco-de-dados.md"]
+    },
+    {
+      "id": "tf-02",
+      "vault": "taskflow",
+      "query": "por que não fomos de MongoDB?",
+      "expected": ["decisao-banco-de-dados.md"]
+    },
+    {
+      "id": "tf-03",
+      "vault": "taskflow",
+      "query": "qual tecnologia vamos usar para montar as telas?",
+      "expected": ["stack-frontend.md"]
+    },
+    {
+      "id": "tf-04",
+      "vault": "taskflow",
+      "query": "como vamos deixar a interface bonita?",
+      "expected": ["stack-frontend.md"]
+    },
+    {
+      "id": "tf-05",
+      "vault": "taskflow",
+      "query": "o que ficou pendente para a Ana resolver?",
+      "expected": ["reuniao-2026-07-10.md"]
+    },
+    {
+      "id": "tf-06",
+      "vault": "taskflow",
+      "query": "a sincronização ao vivo entre usuários vai entrar agora?",
+      "expected": ["reuniao-2026-07-10.md", "arquitetura-geral.md"]
+    },
+    {
+      "id": "tf-07",
+      "vault": "taskflow",
+      "query": "quando devemos extrair um componente reutilizável?",
+      "expected": ["stack-frontend.md"]
+    },
+    {
+      "id": "tf-08",
+      "vault": "taskflow",
+      "query": "qual a postura do time sobre adicionar fila ou cache?",
+      "expected": ["arquitetura-geral.md"]
+    },
+    {
+      "id": "tf-09",
+      "vault": "taskflow",
+      "query": "vamos usar login de terceiros ou fazer o nosso?",
+      "expected": ["decisao-autenticacao-com-sessao-propria.md"]
+    },
+    {
+      "id": "dsb-01",
+      "vault": "dev-second-brain",
+      "query": "por que trocamos o modelo que transforma texto em vetor?",
+      "expected": ["decisao-modelo-embedding.md"]
+    },
+    {
+      "id": "dsb-02",
+      "vault": "dev-second-brain",
+      "query": "o modelo antigo funcionava mal com textos em português?",
+      "expected": ["decisao-modelo-embedding.md"]
+    },
+    {
+      "id": "dsb-03",
+      "vault": "dev-second-brain",
+      "query": "onde os vetores ficam guardados e por que não num banco?",
+      "expected": ["decisao-armazenamento.md"]
+    },
+    {
+      "id": "dsb-04",
+      "vault": "dev-second-brain",
+      "query": "quando vale a pena migrar para SQLite ou Postgres?",
+      "expected": ["decisao-armazenamento.md", "arquitetura.md"]
+    },
+    {
+      "id": "dsb-05",
+      "vault": "dev-second-brain",
+      "query": "quem escreve a resposta final para o usuário?",
+      "expected": ["arquitetura.md", "mvp.md"]
+    },
+    {
+      "id": "dsb-06",
+      "vault": "dev-second-brain",
+      "query": "por que a interface vai ser um app instalado e não um site?",
+      "expected": ["arquitetura.md", "mvp.md"]
+    },
+    {
+      "id": "neg-01",
+      "vault": "taskflow",
+      "query": "receita de bolo de cenoura com cobertura de chocolate",
+      "expected": []
+    },
+    {
+      "id": "neg-02",
+      "vault": "taskflow",
+      "query": "qual o melhor horário para regar samambaias no inverno",
+      "expected": []
+    },
+    {
+      "id": "neg-03",
+      "vault": "dev-second-brain",
+      "query": "como trocar o óleo do câmbio de um carro automático",
+      "expected": []
+    },
+    {
+      "id": "neg-04",
+      "vault": "dev-second-brain",
+      "query": "escalação do time de futebol na final do campeonato",
+      "expected": []
+    }
+  ]
+}
