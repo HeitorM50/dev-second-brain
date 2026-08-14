@@ -2,10 +2,11 @@
 
 **AI Second Brain for Developers** — um segundo cérebro que preserva o contexto de projetos e responde, em linguagem natural, perguntas sobre decisões passadas.
 
-Você conversa com o Claude Code normalmente. Quando a pergunta é sobre algo que já foi decidido, ele consulta suas notas e responde citando de onde tirou. Quando você decide algo novo, pede para ele anotar.
+Você conversa com o Claude Code normalmente. Quando a pergunta é sobre algo que já foi decidido, ele consulta suas notas e responde citando de onde tirou. Quando você decide algo novo, ele oferece anotar — e, ao fim do trabalho, revisa a conversa atrás do que ficou para trás.
 
 > _"o que a gente decidiu sobre o banco no TaskFlow e por quê?"_
 > _"anota aí que vamos usar sessão própria em vez de Auth0, por causa do custo por usuário"_
+> _"é isso por hoje"_ → ele levanta as decisões da conversa e pergunta o que guardar
 
 Busca e embeddings rodam **inteiramente na sua máquina**. Não há chave de API, mensalidade nem serviço externo na indexação.
 
@@ -65,7 +66,7 @@ Dependências de produção: `@modelcontextprotocol/sdk` e `zod`. Só isso.
 | `src/store.ts` | **Fronteira de armazenamento**: gravar, carregar, hash, caches, similaridade e busca |
 | `src/frontmatter.ts` | Metadados das notas: data, status e decisões substituídas |
 | `src/notes.ts` | Criação de notas a partir de conversa: slug seguro e escrita restrita ao vault |
-| `src/mcp-server.ts` | Servidor MCP: expõe as quatro ferramentas ao Claude Code |
+| `src/mcp-server.ts` | Servidor MCP: expõe as cinco ferramentas ao Claude Code e gera o bloco de captura instalado nos projetos |
 | `src/ingest.ts` | CLI de indexação (casca fina sobre `indexer.ts`) |
 | `src/ask.ts` | CLI de busca, para depuração |
 | `src/eval.ts` | Avaliação da qualidade da busca |
@@ -142,9 +143,33 @@ Consequência prática: **você edita uma nota no editor e pergunta em seguida �
 | `list_vaults` | — | Nomes dos vaults indexados |
 | `search_notes` | `query`, `vault?`, `limit?`, `since?`, `until?` | Verifica frescor, embedda a pergunta e devolve os trechos mais próximos, com semelhança, termos em comum e origem. Sem `vault`, cruza todos |
 | `save_note` | `vault`, `title`, `content` | Cria `.md` na pasta `writeTo` do vault, com front-matter, e indexa na hora |
-| `add_vault` | `name`, `sources[]`, `exclude?` | Registra um projeto novo: cria `notes/<name>` como pasta privada, grava em `vaults.json` com caminho relativo e indexa na hora se forem até 30 arquivos. Acima disso, orienta a rodar `npm run ingest` — indexar centenas de arquivos travaria a chamada |
+| `review_decisions` | `vault`, `decisions[]` | Recebe até 10 decisões candidatas de uma conversa, embedda em paralelo e devolve as **notas distintas** mais próximas de cada uma. Não julga duplicata — reporta para o Claude ler |
+| `add_vault` | `name`, `sources[]`, `exclude?`, `projectRoot?` | Registra um projeto novo: cria `notes/<name>` como pasta privada, grava em `vaults.json` com caminho relativo e indexa na hora se forem até 30 arquivos. Com `projectRoot`, instala também a regra de captura no `CLAUDE.md` do projeto |
 
 As descrições dessas ferramentas são parte do sistema, não documentação: é o texto delas que faz o Claude decidir quando acionar a busca e o que incluir numa nota. Mexer ali muda o comportamento.
+
+O `review_decisions` desduplica **por arquivo**: pede à busca quatro vezes mais trechos do que vai mostrar e fica com o melhor de cada nota. Sem isso, uma nota longa ocuparia as duas vagas sozinha, e a resposta seria "as duas mais parecidas" apontando para o mesmo arquivo.
+
+## Captura de fim de sessão
+
+O `save_note` resolve *como* registrar, mas não *quando*. Na prática a decisão é tomada no meio do trabalho, o registro fica para depois, e depois nunca chega — o vault `grupo03` tinha 1.543 trechos indexados e **zero** notas criadas por conversa.
+
+A solução é uma instrução no `CLAUDE.md` do projeto, não código. O `add_vault` a instala quando recebe `projectRoot`:
+
+| Situação | Comportamento |
+|---|---|
+| `CLAUDE.md` não existe | cria com o bloco |
+| já existe | **acrescenta ao fim** — nunca sobrescreve |
+| já contém o bloco | não duplica; reporta que já estava lá |
+| vault já registrado | não recadastra, só instala a regra |
+
+`projectRoot` é opcional **de propósito**: isto escreve dentro do repositório de outro projeto, que pode ser de trabalho ou de um grupo. A descrição da ferramenta instrui o Claude a perguntar antes de preenchê-lo, e a presença do parâmetro é o consentimento. Sem ele, o bloco é apenas impresso como sugestão.
+
+O ritual que o bloco instala: revisar a conversa → `review_decisions` para ver o que já existe → **uma chamada de `save_note` por decisão**, nunca uma nota-diário. Um trecho que mistura assuntos gera um vetor no meio do caminho entre eles e não casa forte com pergunta nenhuma.
+
+O gatilho são os dois momentos que o Claude consegue observar: um sinal explícito ("é isso por hoje") e o instante antes de um commit. Um hook do `Stop`/`SessionEnd` observaria o encerramento de verdade, mas mora fora do projeto e fica intrusivo se mal calibrado — ficou adiado, não descartado.
+
+⚠️ **Esta é a única funcionalidade que `npm run eval` não mede.** A suíte avalia busca, não captura.
 
 ## Segurança da escrita
 
@@ -158,18 +183,20 @@ O título vem do modelo e vira nome de arquivo, então é sanitizado: `NFD` + re
 | `/etc/passwd` | `etc-passwd.md` |
 | `!!!???` | `nota.md` |
 
+A instalação da regra de captura é a **única** escrita fora deste repositório. Ela é opt-in via `projectRoot`, nunca sobrescreve arquivo existente e reconhece o próprio bloco pelo título para não empilhar cópias.
+
 ## Qualidade da busca — medida, não estimada
 
 `npm run eval` roda `eval/questions.json`: **39 perguntas** com nota correta esperada e **6 controles negativos**, cobrindo os três vaults — inclusive um com 1.543 trechos.
 
-Baseline em 2026-08-13:
+Baseline em 2026-08-14:
 
 | Métrica | Valor | Leitura |
 |---|---|---|
-| Recall@1 | 72% | nota certa em primeiro |
+| Recall@1 | 69% | nota certa em primeiro |
 | Recall@3 | 92% | |
 | Recall@5 | **97%** | o trecho certo chega ao contexto do LLM |
-| MRR | 0,821 | |
+| MRR | 0,799 | |
 | Decisões revistas | 1/1 | notas superadas saem sinalizadas |
 | Separação | −0,021 | ⚠️ ver abaixo |
 
@@ -181,7 +208,7 @@ A suíte cobre paráfrase sem palavra em comum, termo exato (identificadores e s
 
 BM25 e fusão RRF estão implementados, mas desativados por padrão (`LEXICAL_WEIGHT=0`), porque a medição não sustentou a hipótese:
 
-| Peso lexical | Recall@1 | Recall@5 | MRR |
+| Peso lexical (acervo de 2026-08-13) | Recall@1 | Recall@5 | MRR |
 |---|---|---|---|
 | **0** | 72% | **97%** | 0,819 |
 | 0,3 | **75%** | 94% | 0,826 |
@@ -202,6 +229,20 @@ A similaridade **ordena resultados entre si; não mede relevância absoluta**. N
 | todos os vaults (1.618) | **0,404** |
 
 O pior acerto legítimo fica em 0,377 — ou seja, **nenhum corte numérico separa os dois grupos**, e a busca cruzada é o pior caso. Por isso quem julga relevância é o Claude, lendo o conteúdo: a descrição da ferramenta instrui a dizer "não encontrei registro" em vez de responder por coincidência de palavras, e a saída avisa quando nem o melhor resultado é forte.
+
+Consequência direta no `review_decisions`: decisões **comprovadamente ausentes** do acervo ("adotar Kubernetes", "trocar para pnpm") pontuam ~0,52, acima do limiar de aviso. Não existe limiar de duplicata; a ferramenta mostra as notas vizinhas e o Claude lê.
+
+### Limitação conhecida: o acervo compete consigo mesmo
+
+Em 2026-08-14, gravar quatro notas legítimas derrubou o Recall@1 de 72% para 69% e o MRR de 0,816 para 0,797 — **sem uma linha da busca ter mudado**.
+
+Medido tirando e recolocando as notas: **uma única pergunta se mexeu**, *"quem escreve a resposta final para o usuário?"*, do 1º para o 4º lugar. Os três trechos que passaram na frente vieram todos da nota nova, com **0% de palavras em comum** com a pergunta — o modelo entende "quem faz o quê entre o Claude e o Heitor" como o mesmo assunto de "quem escreve a resposta".
+
+Isso é inerente a buscar por significado: quanto maior o acervo, mais vizinhos plausíveis cada pergunta tem. A defesa é o **Recall@5**, que segurou em 97%.
+
+> **Como ler as métricas no futuro:** queda no Recall@1 depois de gravar notas é **esperada**, não regressão. Só investigue se o **Recall@5** cair.
+
+⚠️ Pelo mesmo motivo, os números oscilam ±1 pergunta a cada edição de `docs/arquitetura.md`: o vault `dev-second-brain` indexa a pasta `docs/`, então escrever sobre as métricas muda o acervo medido. Este README fica na raiz e **não** é indexado.
 
 ## Front-matter: o que a busca semântica não deduz
 
@@ -329,6 +370,29 @@ As anotações são arquivos `.md` comuns. Abra no editor que quiser, mude o que
 
 **Não existe passo 4.** Não tem botão de sincronizar, não tem "atualizar índice", não tem nada para lembrar.
 
+## E se você esquecer de anotar?
+
+Esse era o furo da ferramenta, e é o que mudou agora.
+
+Anotar custava uma frase — mas ainda custava **lembrar**. Na vida real a decisão é tomada no meio do trabalho, você pensa "depois eu anoto", e depois não chega nunca.
+
+Agora, quando você fala que está encerrando — *"é isso por hoje"*, *"pode parar"*, *"vamos commitar"* — o Claude faz sozinho:
+
+1. Relê a conversa e separa as decisões que você tomou.
+2. Confere quais delas **você já anotou antes**, para não criar nota repetida.
+3. Te mostra só o que sobrou e pergunta o que quer guardar.
+4. Grava **uma anotação para cada decisão**, com o motivo e o que foi descartado.
+
+Você só responde "essas duas" e segue a vida.
+
+Três coisas que ele **não** faz, de propósito:
+
+- Não anota mudança boba: renomear variável, corrigir typo, ajustar formatação.
+- Não inventa. Se a conversa não teve decisão nenhuma, ele diz isso e para.
+- Não junta tudo numa anotação só de "resumo do dia" — cada decisão vira um arquivo, senão a busca piora para todas.
+
+> Para isso funcionar num projeto, ele precisa estar ligado ali. É um pedido só: **"instala a regra de registro aqui"**. Detalhe no cenário 📝 abaixo.
+
 ## Onde ficam suas anotações
 
 Em pastas normais do seu computador, como arquivos de texto que qualquer editor abre. **Nada fica preso na ferramenta.**
@@ -382,7 +446,7 @@ _Exemplo: você acabou de rodar `git init`._
 1. Crie o projeto normalmente.
 2. Adicione ao segundo cérebro logo no começo: **"adiciona esse projeto"**
 3. **Anote as decisões de base assim que tomá-las** — linguagem, banco, framework, estrutura de pastas. São justamente as que ninguém documenta e as que mais doem quando esquecidas.
-4. Cole o bloco de `CLAUDE.md` que ele te oferece (próximo cenário) para não depender de lembrar.
+4. Peça **"instala a regra de registro aqui"** (próximo cenário) para não depender de lembrar.
 
 > As decisões de fundação são as que mais se esquece e as mais caras de reconstruir. Anotar "escolhi X em vez de Y por causa de Z" custa dez segundos no dia e economiza uma tarde daqui a um ano.
 
@@ -393,15 +457,20 @@ _Exemplo: você acabou de rodar `git init`._
 **Objetivo:** parar de precisar lembrar de anotar.
 
 1. Adicione o projeto (cenários acima).
-2. Ao registrar, o Claude te oferece um bloco de texto pronto. **Cole esse bloco no `CLAUDE.md` do projeto.**
+2. Diga: **"instala a regra de registro aqui"**.
 3. É só isso.
+
+Ele vai **pedir sua autorização antes**, porque isso escreve um arquivo dentro do repositório daquele projeto. Depois que você autorizar, ele mesmo grava — você não precisa copiar e colar nada.
 
 A partir daí, dentro daquele projeto, o Claude passa a:
 
-- **registrar decisões sozinho**, sem você pedir;
+- **oferecer registro na hora** em que uma decisão é tomada;
+- **fazer a revisão de fim de sessão** quando você disser que está parando, ou antes de um commit;
 - **consultar o que já foi decidido** antes de sugerir mudança estrutural — o que evita ele propor algo que você já descartou por um bom motivo.
 
-Se o projeto ainda não tem `CLAUDE.md`, crie um arquivo com esse nome na raiz e cole o bloco. Ele é lido automaticamente toda vez que o Claude Code abre ali.
+**Já vale para projeto antigo.** Se você adicionou um projeto antes disso existir, é o mesmo pedido — ele não recadastra nada, só liga a regra.
+
+Se preferir fazer à mão, peça o bloco sem autorizar a escrita: ele te mostra o texto para você colar no `CLAUDE.md` da raiz do projeto. Esse arquivo é lido automaticamente toda vez que o Claude Code abre ali.
 
 ---
 
@@ -449,18 +518,19 @@ Combina bem: você edita no Obsidian, salva, e a próxima pergunta já considera
 
 Uma ressalva: abrir a pasta `notes/` inteira mostra todos os projetos num grafo só. Abrir só `notes/<projeto>/` isola um projeto, mas perde a visão geral. Escolha conforme o que quiser enxergar.
 
-> Hoje os links servem para **você navegar**, não para a busca — ela compara significado, e um `[[link]]` é só texto para ela. Fazer a busca seguir os links é uma melhoria já anotada no backlog.
+> Os links servem para **você navegar**, não para a busca — ela compara significado, e um `[[link]]` é só texto para ela. Fazer a busca seguir os links chegou a ser construído e medido: não trouxe ganho nenhum neste tamanho de acervo, e ficou desligado.
 
 ## Uma rotina que funciona
 
-- **Terminou uma discussão técnica?** "anota aí o que decidimos e por quê"
+- **Ligue a regra de registro** em todo projeto que você adicionar. É o passo que faz o resto acontecer sem você.
+- **Ao parar de trabalhar**, diga: "é isso por hoje". Ele revisa e pergunta o que guardar.
 - **Vai começar uma tarefa numa parte do código que não toca há tempo?** "o que eu já decidi sobre essa parte?"
 - **Alguém te pergunta por que o sistema é assim?** Pergunte antes de responder de memória.
-- **Toda sexta**, se lembrar: "o que decidi essa semana que ainda não está anotado?"
+- **No meio do trabalho**, quando a decisão for grande demais para esperar o fim da sessão: "anota aí o que decidimos e por quê"
 
 ## Duas coisas honestas
 
-**1. Se você não anotar, ela não serve para nada.** Não existe mágica: a ferramenta responde a partir do que você escreveu. Por isso anotar foi feito para custar uma frase — o objetivo é remover toda desculpa para não fazer.
+**1. Se nada for anotado, ela não serve para nada.** Não existe mágica: a ferramenta responde a partir do que foi escrito. A revisão de fim de sessão reduz muito o esforço, mas não elimina você da conta — é você quem confirma o que vale guardar, e é você quem precisa ligar a regra em cada projeto.
 
 **2. Ela pode trazer coisa que não responde sua pergunta.** A busca sempre devolve os trechos "mais parecidos", mesmo quando nenhum serve. O Claude foi instruído a perceber isso e dizer que não encontrou, mas confira a anotação citada quando a resposta parecer estranha. **É um caderno, não um oráculo.**
 
