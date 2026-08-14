@@ -11,20 +11,21 @@ Tem também **[como medimos a qualidade](#6-qualidade-como-medimos)**, os
 **[experimentos que não deram certo](#7-experimentos-que-não-deram-certo)** e um
 **[glossário](#8-glossário)** com todo termo técnico usado aqui.
 
-_Última atualização: 2026-08-13_
+_Última atualização: 2026-08-14_
 
 ---
 
 ## 1. Onde estamos
 
-> **O MVP acabou. A ferramenta é usável todo dia, de dentro de qualquer projeto.**
-> O trabalho agora é **captura** — fazer com que as notas apareçam sem esforço.
+> **O ciclo fechou: consultar e registrar funcionam sem esforço.**
+> A ferramenta é usável todo dia, de dentro de qualquer projeto, e as decisões viram
+> nota sozinhas ao fim do trabalho. **A próxima escolha é sua** — ver abaixo.
 
 ```mermaid
 flowchart LR
-    FEITO["✅ <b>PRONTO</b><br/><br/>Busca semântica<br/>Vaults por projeto<br/>Registro por conversa<br/>Índice sempre atualizado<br/>Datas e decisões revistas"]
-    AGORA["🎯 <b>AGORA</b><br/><br/>Captura de<br/>fim de sessão"]
-    DEPOIS["🔭 <b>DEPOIS</b><br/><br/>Ingestão de docs grandes<br/>Vault automático<br/>Interface própria"]
+    FEITO["✅ <b>PRONTO</b><br/><br/>Busca semântica<br/>Vaults por projeto<br/>Índice sempre atualizado<br/>Datas e decisões revistas<br/>Captura de fim de sessão"]
+    AGORA["🎯 <b>DECIDIR</b><br/><br/>Ingestão de docs grandes<br/><i>ou</i><br/>Vault pelo diretório"]
+    DEPOIS["🔭 <b>DEPOIS</b><br/><br/>Contexto hierárquico<br/>Interface própria"]
 
     FEITO --> AGORA --> DEPOIS
 
@@ -44,24 +45,22 @@ flowchart LR
 | 🔄 **Frescor** | o índice nunca responde com texto velho | ✅ resolvido |
 | 🎯 **Busca** | encontrar o trecho certo | ✅ perto do teto (97%) |
 | 🧭 **Confiança** | saber quando algo foi decidido e se ainda vale | ✅ resolvido |
-| ✍️ **Captura** | as notas existirem sem esforço | 🟡 **é aqui que estamos** |
+| ✍️ **Captura** | as notas existirem sem esforço | ✅ resolvido em 2026-08-14 |
 | 🖥️ **Interface** | tela própria | ⬜ adiada, virou opcional |
 
-### 🎯 O próximo passo: captura de fim de sessão
+### 🎯 A próxima escolha
 
-**O problema:** o `save_note` funciona, mas exige que alguém lembre de pedir. Na prática
-a decisão é tomada no meio do trabalho, o registro fica "para depois", e depois nunca
-chega. **Um segundo cérebro que não cresce é arquivo morto.**
+Nenhuma frente está travando a ferramenta. As duas candidatas, com o trade-off:
 
-**A ideia:** ao terminar um trabalho, o Claude resume as decisões da conversa e oferece
-registrá-las. Transforma conversa em memória sem depender de disciplina.
+| Candidata | O que destrava | Custo |
+|---|---|---|
+| **Ingestão de fontes extensas** | apontar para uma documentação grande e quebrá-la em notas temáticas, em vez de indexar arquivos gigantes inteiros | é a que mais mexe no `indexer.ts`; precisa decidir como cortar sem perder contexto |
+| **Vault automático pelo diretório** | deduzir o projeto pela pasta onde você está, sem dizer o nome | menor e mais barata; hoje quem resolve isso é o bloco no `CLAUDE.md`, que já nomeia o vault |
 
-**Como fazer:** provavelmente uma instrução no `CLAUDE.md` do projeto — igual ao bloco
-que o `add_vault` já sugere — e não uma ferramenta nova.
-
-**Ressalva honesta:** esta é a primeira melhoria que a prova de qualidade **não
-consegue medir**. Ela avalia busca, não captura. A métrica real vai ser o vault crescer
-com notas que você releria.
+**Recomendação:** a segunda tem menos valor agora justamente porque o bloco de captura
+já cobre o caso comum. A primeira ataca um limite real — vaults grandes como o `grupo03`
+foram indexados como estão, sem tratamento. Mas nenhuma das duas é urgente:
+**usar a ferramenta por alguns dias antes de escolher é uma opção legítima.**
 
 ### O que deliberadamente NÃO fazer agora
 
@@ -70,6 +69,7 @@ com notas que você releria.
 | Interface própria (Fase 2) | O Claude Code já é a interface. Construir tela agora adia o que de fato limita a ferramenta |
 | Trocar JSON por banco | O JSON aguenta muito além do volume atual. Gatilhos na [seção 5](#quando-trocar-de-armazenamento) |
 | Mais ajuste na busca | Recall@5 está em 97% e duas tentativas seguidas foram reprovadas ([seção 7](#7-experimentos-que-não-deram-certo)) |
+| Reagir a queda no Recall@1 | O acervo crescendo derruba o Recall@1 sozinho, sem nada ter piorado. Ver [seção 6](#o-acervo-compete-consigo-mesmo) antes de "consertar" |
 | Gerar nota de commit do git | Commit não é decisão. Geraria ruído que afoga as notas boas |
 | Religar busca lexical ou grafo | Foram desligadas com dado. Religar é medir de novo, não editar padrão por intuição |
 
@@ -151,6 +151,8 @@ ele acontece **antes**, uma vez só, e o resultado é guardado, cada pergunta é
 | Buscar em um projeto ou em todos | dizendo o projeto, ou não dizendo |
 | Perguntar sobre um período | *"o que decidimos em julho?"* |
 | Editar notas no editor | a busca acompanha sozinha, sem comando |
+| **Fechar o dia sem perder nada** | dizendo *"é isso por hoje"* — o Claude revisa a conversa, checa o que já está registrado e oferece gravar o resto |
+| **Ligar a captura num projeto** | *"instala a regra de registro aqui"* — o bloco vai para o `CLAUDE.md` dele |
 
 ### Por baixo
 
@@ -161,10 +163,14 @@ ele acontece **antes**, uma vez só, e o resultado é guardado, cada pergunta é
 | **Frescor automático** | O índice se atualiza antes de responder; nunca devolve texto velho |
 | **Front-matter** | Data e status nas notas: habilita filtro por período e alerta de decisão revista |
 | **Escrita restrita** | Notas suas nunca são gravadas dentro do repositório de um cliente |
+| **Ritual de captura** | Uma instrução no `CLAUDE.md` do projeto, instalada pelo `add_vault`, faz o registro acontecer sem você pedir |
+| **Revisão antes de gravar** | `review_decisions` mostra as notas parecidas que já existem, para não encher o acervo de repetição |
 | **Prova de qualidade** | 39 perguntas com gabarito; toda mudança na busca é medida |
 
-**Vaults ativos:** `taskflow` (15 trechos, exemplo) · `dev-second-brain` (67) ·
-`grupo03` (1.543, projeto real)
+**Vaults ativos:** `taskflow` (15 trechos, exemplo) · `dev-second-brain` (69) ·
+`grupo03` (1.544, projeto real)
+
+**Captura ligada em:** `dev-second-brain` · `grupo03`
 
 ---
 
@@ -172,18 +178,18 @@ ele acontece **antes**, uma vez só, e o resultado é guardado, cada pergunta é
 
 Ordenado por **quanto destrava**, não por quanto é interessante.
 
-### ✍️ Captura — onde está o gargalo real
+### ✍️ Captura
 
 | | Ideia | O que é |
 |---|---|---|
-| 🎯 | **Captura de fim de sessão** | Ao terminar um trabalho, resumir as decisões e oferecer registrá-las. É o próximo passo |
-| ⬜ | **Ingestão de fontes extensas** | Apontar para documentação grande e quebrar em várias notas temáticas |
+| ✅ | **Captura de fim de sessão** | Feito em 2026-08-14. Regra no `CLAUDE.md` + `review_decisions` |
+| 🎯 | **Ingestão de fontes extensas** | Apontar para documentação grande e quebrar em várias notas temáticas. **Candidata ao próximo passo** |
 
 ### 🧭 Confiança e organização
 
 | | Ideia | O que é |
 |---|---|---|
-| ⬜ | **Vault automático pelo diretório** | Deduzir o projeto pela pasta onde você está, sem precisar dizer |
+| 🎯 | **Vault automático pelo diretório** | Deduzir o projeto pela pasta onde você está, sem precisar dizer. **Candidata ao próximo passo** |
 | ⬜ | **Contexto hierárquico no trecho** | Cada trecho carregar o caminho completo de títulos (`Decisão banco > Alternativas > MongoDB`) |
 
 ### 🖥️ Interface
@@ -218,6 +224,9 @@ Registradas para não serem rediscutidas do zero. Cada uma tem a alternativa des
 | **Quem redige a resposta** | o próprio Claude Code, via MCP | sem chave de API, sem custo extra, disponível em qualquer pasta | API paga, modelo local de geração |
 | **Organização** | um vault por projeto | isolamento é questão de **corretude**, não de arrumação | tudo num índice só |
 | **Interface** | conversa no terminal | já existe e funciona; app fica opcional | app web, Electron, Tauri |
+| **Captura** | regra escrita no `CLAUDE.md`, instalada pelo `add_vault` | zero código, testável na hora; o gatilho fica em sinais que o Claude consegue observar | hook do Claude Code (adiado, não descartado) |
+| **Formato da nota** | uma nota por decisão | um trecho que mistura assuntos não casa forte com pergunta nenhuma | nota-diário de sessão |
+| **Duplicatas** | mostrar as notas vizinhas e deixar o Claude julgar | medido: decisão ausente do acervo ainda pontua ~0,52 — não existe limiar que separe | limiar automático de duplicata |
 
 ### Quando trocar de armazenamento
 
@@ -272,14 +281,36 @@ responder; se ficou em 6º, ela nunca chega, e a resposta sai errada ou não sai
 
 | Métrica | Valor |
 |---|---|
-| Recall@1 | 72% |
+| Recall@1 | 69% |
 | Recall@3 | 92% |
 | **Recall@5** | **97%** — 38 de 39 |
-| MRR | 0,816 |
+| MRR | 0,799 |
 | Decisões revistas sinalizadas | 1/1 |
+
+> ⚠️ Estes números **oscilam em ±1 pergunta** a cada edição deste arquivo. O vault
+> `dev-second-brain` indexa a pasta `docs/`, então escrever aqui muda o próprio acervo
+> que está sendo medido. Não persiga a última casa decimal.
 
 A única falha é *"quantas personas o projeto definiu?"* — pergunta de **contagem**, que
 exige somar coisas espalhadas. Busca por trecho não faz isso. Limite conhecido, não bug.
+
+### O acervo compete consigo mesmo
+
+Em 2026-08-14, gravar quatro notas legítimas derrubou o Recall@1 de 72% para 69% e o MRR
+de 0,816 para 0,797, **sem nenhuma linha da busca ter mudado**.
+
+Medido tirando e recolocando as notas: **uma única pergunta se mexeu** — *"quem escreve a
+resposta final para o usuário?"*, que caiu do 1º para o 4º lugar. Os três trechos que
+passaram na frente vieram todos da nota nova sobre captura, com **0% de palavras em
+comum** com a pergunta. É puramente semântico: o modelo entende "quem faz o quê entre o
+Claude e o Heitor" como o mesmo assunto de "quem escreve a resposta".
+
+**Isso não tem conserto, e não deveria ter.** É inerente a buscar por significado: quanto
+mais o acervo cresce, mais vizinhos plausíveis cada pergunta tem. A defesa é o
+**Recall@5**, que segurou em 97% — a resposta certa continua chegando ao Claude.
+
+> **Como ler isto no futuro:** uma queda no Recall@1 depois de gravar notas é
+> **esperada**, não regressão. Só investigue de verdade se o **Recall@5** cair.
 
 ### ⚠️ A limitação que você precisa conhecer
 

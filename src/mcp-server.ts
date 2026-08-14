@@ -8,12 +8,14 @@
 // console.log() aqui corromperia as mensagens e derrubaria a conexão.
 // Para depurar, use console.error(), que vai para stderr.
 
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
+import { mapWithConcurrency } from "./concurrency.js";
 import { embed } from "./embed.js";
 import { buildVaultIndex, isVaultStale } from "./indexer.js";
 import { isSuperseded } from "./frontmatter.js";
@@ -28,6 +30,22 @@ import {
 } from "./vaults.js";
 
 const DEFAULT_LIMIT = 5;
+
+// Medido em `npm run eval`: o pior acerto legítimo fica em 0,377 e o melhor falso
+// positivo em 0,353 — margem estreitíssima. Por isso este número não CORTA nada,
+// apenas sinaliza; quem decide relevância é a leitura do conteúdo.
+const WEAK_SIMILARITY = 0.40;
+
+// Acima disso a revisão vira despejo: muitas linhas para o Claude comparar de uma vez,
+// e ~1s de embedding por decisão a mais de espera.
+const MAX_DECISIONS = 10;
+
+// Duas notas por decisão bastam para julgar "isso já está registrado?". Mais que isso
+// enche o contexto sem acrescentar informação — a terceira já costuma ser ruído.
+const REVIEW_NEIGHBORS = 2;
+
+// Ponto ótimo medido no indexador; mesma razão vale aqui (embeddar é limitado por CPU).
+const CONCURRENCY = Number(process.env["EMBED_CONCURRENCY"] ?? 4);
 
 /**
  * Garante que o índice reflete o estado atual das notas antes de responder.
@@ -237,6 +255,77 @@ server.registerTool(
 // fica por conta do `npm run ingest`.
 const INSTANT_INDEX_FILE_LIMIT = 30;
 
+/** Título do bloco. Serve também de marcador para não instalá-lo duas vezes. */
+const CAPTURE_RULE_HEADING = "## Registro de decisões no segundo cérebro";
+
+/**
+ * O ritual de captura, em forma de instrução para o CLAUDE.md do projeto.
+ *
+ * Uma função só porque este texto tem dois destinos — ser gravado no arquivo e ser
+ * impresso como sugestão. Duplicá-lo garantiria que um dia os dois divergissem.
+ */
+function captureRuleBlock(vault: string): string {
+    return [
+        CAPTURE_RULE_HEADING,
+        "",
+        `Este projeto usa o dev-second-brain (MCP). Vault: **${vault}**.`,
+        "",
+        "**Durante o trabalho**",
+        "- Ao tomar uma decisão técnica (escolha de biblioteca, mudança de abordagem,",
+        `  alternativa descartada), ofereça registrar com \`save_note\` no vault \`${vault}\` —`,
+        "  sempre com o **porquê** e as alternativas consideradas.",
+        `- Antes de propor mudança estrutural, consulte \`search_notes\` no vault \`${vault}\``,
+        "  para não contrariar algo já decidido.",
+        "",
+        "**Revisão de captura** — execute quando o Heitor sinalizar que está encerrando",
+        "(\"é isso por hoje\", \"pode parar\", \"vamos commitar\") **e** sempre antes de um commit:",
+        "",
+        "1. Releia a conversa e liste as decisões tomadas — uma frase curta e autocontida",
+        "   cada. Se não houve decisão nenhuma, diga isso em uma linha e siga adiante;",
+        "   nunca invente conteúdo para ter o que registrar.",
+        `2. Chame \`review_decisions\` com essa lista, vault \`${vault}\`.`,
+        "3. LEIA os trechos devolvidos. Semelhança alta NÃO prova que a decisão já está",
+        "   registrada — só considere coberta aquela cujo trecho de fato diz a mesma coisa.",
+        "4. Mostre ao Heitor as que sobraram e pergunte quais registrar.",
+        "5. Grave **uma nota por decisão** com `save_note` — nunca uma nota-diário juntando",
+        "   várias. Cada nota responde: o que ficou decidido · por quê · o que foi descartado.",
+        "",
+        "**Não registre** mudança trivial (renomear variável, typo, formatação), nem o que já",
+        "está em nota, nem \"o que foi feito\" — nota é para decisão, não para diff nem changelog.",
+    ].join("\n");
+}
+
+/**
+ * Grava o bloco no CLAUDE.md do projeto.
+ *
+ * Só é chamada quando o Heitor autoriza explicitamente (ver `projectRoot` na descrição
+ * da ferramenta): isto escreve DENTRO do repositório de outro projeto, que pode ser de
+ * trabalho ou de um grupo. Por isso nunca sobrescreve — só acrescenta ao fim — e
+ * reconhece o próprio bloco pelo título para não empilhar cópias a cada chamada.
+ */
+function installCaptureRule(projectRoot: string, vault: string): string {
+    if (!existsSync(projectRoot) || !statSync(projectRoot).isDirectory()) {
+        return `⚠ Não instalei a regra: "${projectRoot}" não é uma pasta existente.`;
+    }
+
+    const target = join(projectRoot, "CLAUDE.md");
+    const block = captureRuleBlock(vault);
+
+    if (!existsSync(target)) {
+        writeFileSync(target, `${block}\n`, "utf-8");
+        return `Regra de captura instalada em ${target} (arquivo criado).`;
+    }
+
+    const current = readFileSync(target, "utf-8");
+    if (current.includes(CAPTURE_RULE_HEADING)) {
+        return `A regra de captura já estava em ${target} — não duplicada.`;
+    }
+
+    const separator = current.endsWith("\n") ? "\n" : "\n\n";
+    writeFileSync(target, `${current}${separator}${block}\n`, "utf-8");
+    return `Regra de captura acrescentada ao fim de ${target} (conteúdo anterior preservado).`;
+}
+
 server.registerTool(
     "add_vault",
     {
@@ -251,6 +340,7 @@ server.registerTool(
             + "raiz do repositório, para não indexar README de dependência e arquivos "
             + "gerados. Uma pasta de anotações privadas é criada automaticamente e será o "
             + "destino de save_note — a documentação do projeto nunca é escrita.",
+        // Sem `projectRoot` o comportamento é o de sempre: nada é escrito fora daqui.
         inputSchema: {
             name: z.string().describe(
                 "Nome curto do vault, em minúsculas, sem espaço. É como o projeto será "
@@ -262,9 +352,18 @@ server.registerTool(
             exclude: z.array(z.string()).optional().describe(
                 "Trechos de caminho a ignorar, ex.: ['CHANGELOG', 'api-reference'].",
             ),
+            projectRoot: z.string().optional().describe(
+                "Caminho absoluto da RAIZ do projeto. Se informado, a regra de registro de "
+                + "decisões é gravada no CLAUDE.md de lá, e o projeto passa a capturar "
+                + "decisões sozinho. Isto ESCREVE dentro do repositório do outro projeto: "
+                + "PERGUNTE ao Heitor e só preencha depois que ele autorizar. Omitido, a "
+                + "regra é apenas sugerida como texto, sem tocar em nenhum arquivo. "
+                + "Se o vault JÁ existir, a chamada não o altera e serve só para instalar a "
+                + "regra — nesse caso `sources` é ignorado, pode repetir o projectRoot nele.",
+            ),
         },
     },
-    async ({ name, sources, exclude }) => {
+    async ({ name, sources, exclude, projectRoot }) => {
         const config = loadVaultConfig();
 
         if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) {
@@ -273,7 +372,19 @@ server.registerTool(
                 isError: true,
             };
         }
+        // Vault já registrado não se registra de novo — mas instalar a regra de captura
+        // num projeto que já é vault é caso legítimo e comum: é exatamente o que acontece
+        // com todo projeto adicionado antes de esta regra existir.
         if (config[name] !== undefined) {
+            if (projectRoot !== undefined) {
+                return {
+                    content: [{
+                        type: "text",
+                        text: `O vault "${name}" já existe — mantido como está.\n`
+                            + installCaptureRule(projectRoot, name),
+                    }],
+                };
+            }
             return {
                 content: [{ type: "text", text: `O vault "${name}" já existe. Edite vaults.json para alterá-lo.` }],
                 isError: true,
@@ -330,36 +441,169 @@ server.registerTool(
             );
         }
 
-        lines.push(
-            "",
-            "Sugira ao Heitor acrescentar este bloco ao CLAUDE.md do projeto, para que as "
-            + "decisões passem a ser registradas sem ele precisar pedir toda vez:",
-            "",
-            "```markdown",
-            "## Registro de decisões no segundo cérebro",
-            "",
-            `Este projeto usa o dev-second-brain (MCP). Vault: **${name}**.`,
-            "",
-            "- Ao tomar uma decisão técnica (escolha de biblioteca, mudança de abordagem,",
-            `  alternativa descartada), registre com \`save_note\` no vault \`${name}\`,`,
-            "  incluindo sempre o **porquê** e as alternativas consideradas.",
-            `- Antes de propor mudança estrutural, consulte \`search_notes\` no vault \`${name}\``,
-            "  para não contrariar algo já decidido.",
-            "- NÃO registre mudanças triviais (renomear variável, typo, formatação):",
-            "  nota é para decisão, não para diff.",
-            "```",
-        );
+        // Registrar o vault resolve metade do problema: dá para CONSULTAR o projeto. A
+        // outra metade — as decisões novas virarem nota — depende de o projeto carregar
+        // a instrução. Enquanto isso dependia de copiar e colar à mão, não acontecia.
+        if (projectRoot !== undefined) {
+            lines.push("", installCaptureRule(projectRoot, name));
+        } else {
+            lines.push(
+                "",
+                "O projeto ainda NÃO captura decisões sozinho. Pergunte ao Heitor se pode "
+                + "instalar a regra abaixo no CLAUDE.md dele — se ele autorizar, chame esta "
+                + "ferramenta de novo passando `projectRoot`. Caso prefira colar à mão:",
+                "",
+                "```markdown",
+                captureRuleBlock(name),
+                "```",
+            );
+        }
 
         return { content: [{ type: "text", text: lines.join("\n") }] };
     },
 );
 
-/** Formata os resultados como texto legível — é isso que entra no contexto do Claude. */
-// Medido em `npm run eval`: o pior acerto legítimo fica em 0,377 e o melhor falso
-// positivo em 0,353 — margem estreitíssima. Por isso este número não CORTA nada,
-// apenas sinaliza; quem decide relevância é a leitura do conteúdo.
-const WEAK_SIMILARITY = 0.40;
+/**
+ * As notas distintas mais próximas de um texto.
+ *
+ * A busca devolve TRECHOS, e uma nota longa costuma ocupar várias das primeiras
+ * posições — o que responderia "as duas mais parecidas" com o mesmo arquivo duas vezes.
+ * Para revisar duplicata o que importa é quais NOTAS já falam do assunto, então aqui
+ * pedimos com folga e ficamos só com o melhor trecho de cada arquivo.
+ */
+function nearestNotes(
+    searchable: ReturnType<typeof getSearchable>,
+    text: string,
+    embedding: number[],
+): SearchHit[] {
+    const hits = hybridSearch(text, embedding, searchable, REVIEW_NEIGHBORS * 4);
 
+    const bestPerSource: SearchHit[] = [];
+    const seen = new Set<string>();
+
+    for (const hit of hits) {
+        const key = `${hit.vault}/${hit.source}`;
+        if (seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+        bestPerSource.push(hit);
+        if (bestPerSource.length === REVIEW_NEIGHBORS) {
+            break;
+        }
+    }
+
+    return bestPerSource;
+}
+
+/** Primeiras palavras do trecho, em uma linha só, para dar contexto sem inchar a saída. */
+function excerpt(hit: SearchHit, maxChars = 150): string {
+    // A primeira linha do texto guardado é "Fonte: <arquivo>", já mostrada no cabeçalho.
+    const body = hit.text.split("\n").slice(1).join(" ").replace(/\s+/g, " ").trim();
+    return body.length > maxChars ? `${body.slice(0, maxChars)}…` : body;
+}
+
+server.registerTool(
+    "review_decisions",
+    {
+        title: "Revisar decisões antes de registrar",
+        description:
+            "Verifica, de uma vez só, quais decisões de uma conversa JÁ estão registradas "
+            + "no segundo cérebro do Heitor. Use ao fechar uma sessão de trabalho — quando "
+            + "ele sinalizar que está encerrando ou antes de um commit — passando em "
+            + "`decisions` uma frase curta e autocontida por decisão tomada na conversa "
+            + "(ex.: 'usar Redis para cache de sessão'), e NÃO um resumo do dia inteiro. "
+            + "Para cada uma, devolve as notas existentes mais parecidas. "
+            + "IMPORTANTE: a semelhança ordena os resultados entre si e não mede relevância "
+            + "absoluta — LEIA os trechos e julgue você mesmo se a decisão já está coberta. "
+            + "Depois, ofereça ao Heitor registrar apenas as que sobraram, uma chamada de "
+            + "save_note por decisão — nunca uma nota só juntando várias.",
+        inputSchema: {
+            vault: z.string().describe(
+                "Projeto ao qual as decisões pertencem. Use list_vaults se não souber o nome.",
+            ),
+            decisions: z.array(z.string()).min(1).max(MAX_DECISIONS).describe(
+                "Uma frase curta por decisão candidata, autocontida o bastante para ser "
+                + `buscada sozinha. Máximo ${MAX_DECISIONS}.`,
+            ),
+        },
+    },
+    async ({ vault, decisions }) => {
+        const config = loadVaultConfig();
+        if (config[vault] === undefined) {
+            const available = Object.keys(config).join(", ");
+            return {
+                content: [{ type: "text", text: `Vault "${vault}" não existe. Disponíveis: ${available}.` }],
+                isError: true,
+            };
+        }
+
+        // Sem isto, uma nota salva minutos atrás ainda não estaria no índice e a decisão
+        // apareceria como "nova" — justamente a duplicata que a ferramenta existe para evitar.
+        await refreshIfStale(vault);
+        const searchable = getSearchable(vault);
+
+        if (searchable.chunks.length === 0) {
+            return {
+                content: [{
+                    type: "text",
+                    text: `O vault "${vault}" ainda não tem nada indexado — todas as decisões `
+                        + "são novas. Ofereça registrar cada uma com save_note.",
+                }],
+            };
+        }
+
+        let embeddings: number[][];
+        try {
+            embeddings = await mapWithConcurrency(decisions, CONCURRENCY, (text) => embed(text));
+        } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            return {
+                content: [{
+                    type: "text",
+                    text: "Não consegui gerar os vetores das decisões — o Ollama parece estar "
+                        + `indisponível em localhost:11434 (${detail}). `
+                        + "Tente `systemctl start ollama` e repita a revisão.",
+                }],
+                isError: true,
+            };
+        }
+
+        const blocks = decisions.map((decision, index) => {
+            const embedding = embeddings[index] ?? [];
+            const neighbours = nearestNotes(searchable, decision, embedding);
+            const best = neighbours[0]?.cosine ?? 0;
+
+            const lines = neighbours.map(
+                (hit) => `    ${hit.source} (${hit.cosine.toFixed(3)}) — "${excerpt(hit)}"`,
+            );
+
+            // Mesmo critério do formatHits: sinaliza, nunca corta — e ACRESCENTA à lista
+            // em vez de substituí-la. Medido: uma decisão comprovadamente ausente do
+            // acervo ainda pontua ~0,52, acima do limiar. Ou seja, o aviso silenciado
+            // não significa "está registrada"; só a leitura dos trechos decide isso.
+            if (best < WEAK_SIMILARITY) {
+                lines.push(
+                    `    ⚠ semelhança fraca (melhor ${best.toFixed(3)}) — indício forte de `
+                    + "que o assunto não existe no acervo",
+                );
+            }
+
+            return [`[${index + 1}] ${decision}`, ...lines].join("\n");
+        });
+
+        const header = `Revisão de ${decisions.length} decisão(ões) no vault "${vault}" — `
+            + "notas existentes mais próximas de cada uma.\n"
+            + "⚠ A semelhança ORDENA, não julga. Um valor alto NÃO prova que a decisão já "
+            + "está registrada: a busca sempre devolve o que tem de mais próximo, mesmo "
+            + "quando nada trata do assunto. LEIA cada trecho e decida você. Só considere "
+            + "coberta a decisão cujo trecho realmente diz a mesma coisa.\n";
+
+        return { content: [{ type: "text", text: [header, ...blocks].join("\n\n") }] };
+    },
+);
+
+/** Formata os resultados como texto legível — é isso que entra no contexto do Claude. */
 function formatHits(query: string, hits: SearchHit[]): string {
     const topCosine = hits[0]?.cosine ?? 0;
 
